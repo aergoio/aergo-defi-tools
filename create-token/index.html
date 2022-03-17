@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Aergo - Create Token</title>
+
+<link rel="stylesheet" href="/styles.css"/>
+
+<link rel="icon" href="/images/favicon.png" sizes="32x32" />
+<link rel="icon" href="/images/favicon.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/images/favicon.png" />
+<meta name="msapplication-TileImage" content="/images/favicon.png" />
+
+</head>
+<body>
+
+<div class="container px-5 my-5">
+
+<div class="row align-items-stretch mb-4">
+
+<div class="col-lg-6">
+</div>
+<div class="col-lg-6">
+  <!--div class="text-center mb-2 fw-700 small text-uppercase">Create Token</div-->
+  <div class="card mb-4">
+    <div class="card-body">
+
+    <form id="new_arc1_token">
+        <div class="form-floating mb-3">
+            <input class="form-control" id="tokenName" type="text" placeholder="Token Name" />
+            <label for="tokenName">Token Name</label>
+        </div>
+        <div class="form-floating mb-3">
+            <input class="form-control" id="tokenSymbol" type="text" placeholder="Token Symbol" />
+            <label for="tokenSymbol">Token Symbol</label>
+        </div>
+        <div class="form-floating mb-3">
+            <input class="form-control" id="decimals" type="text" placeholder="Decimals" value="18" data-sb-validations="required" />
+            <label for="decimals">Decimals</label>
+            <div class="invalid-feedback" data-sb-feedback="decimals:required">Decimals is required.</div>
+        </div>
+        <div class="form-floating mb-3">
+            <input class="form-control" id="initialSupply" type="text" placeholder="Initial Supply" data-sb-validations="required" />
+            <label for="initialSupply">Initial Supply</label>
+            <div class="invalid-feedback" data-sb-feedback="initialSupply:required">Initial Supply is required.</div>
+        </div>
+        <div class="mb-3" id="extensions">
+            <label class="form-label d-block">Extensions</label>
+            <div class="form-check">
+                <input class="form-check-input" id="mintable" type="checkbox" name="extensions" />
+                <label class="form-check-label" for="mintable">Mintable</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" id="burnable" type="checkbox" name="extensions" />
+                <label class="form-check-label" for="burnable">Burnable</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" id="blacklist" type="checkbox" name="extensions" />
+                <label class="form-check-label" for="blacklist">Blacklist</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" id="pausable" type="checkbox" name="extensions" />
+                <label class="form-check-label" for="pausable">Pausable</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" id="all_approval" type="checkbox" name="extensions" />
+                <label class="form-check-label" for="all_approval">All Approval</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" id="limited_approval" type="checkbox" name="extensions" />
+                <label class="form-check-label" for="limited_approval">Limited Approval</label>
+            </div>
+        </div>
+        <div class="form-floating mb-3">
+            <input class="form-control" id="maxSupply" type="text" placeholder="Max Supply" />
+            <label for="maxSupply">Max Supply</label>
+        </div>
+
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="create-token" type="button">Create Token</button>
+        </div>
+    </form>
+</div>
+
+</div>
+</div>
+</div>
+</div>
+
+<script src="bundle.js" type="text/javascript" charset="utf-8"></script>
+
+</body>
+</html>
