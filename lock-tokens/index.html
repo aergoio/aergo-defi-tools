@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Aergo - Lock Tokens</title>
+
+<link rel="stylesheet" href="/styles.css"/>
+
+<link rel="icon" href="/images/favicon.png" sizes="32x32" />
+<link rel="icon" href="/images/favicon.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/images/favicon.png" />
+<meta name="msapplication-TileImage" content="/images/favicon.png" />
+
+</head>
+<body>
+
+<div class="container px-5 my-5">
+
+<div class="row align-items-stretch mb-4">
+
+<div class="col-lg-6">
+</div>
+<div class="col-lg-6">
+  <!--div class="text-center mb-2 fw-700 small text-uppercase">Create Token</div-->
+  <div class="card mb-4">
+    <div class="card-body">
+
+    <form id="card1">
+        <div class="mb-3">
+            <label class="form-label d-block">Lock tokens and liquidity</label>
+            <label class="form-label d-block">View your locked tokens</label>
+            <label class="form-label d-block">Withdraw unlocked tokens</label>
+        </div>
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="connect-wallet" type="button">Connect Wallet</button>
+        </div>
+    </form>
+
+
+    <form id="card2" style="display:none">
+        <div class="mb-3">
+            <label class="form-label d-block" style="text-align:center">Locked Tokens</label>
+
+            <table class="table">
+              <thead>
+                <tr>
+                  <th scope="col">Token</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Expiration</th>
+                  <th scope="col">&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+
+        </div>
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="add-lock" type="button">Lock New Tokens</button>
+        </div>
+    </form>
+
+
+    <form id="card3" style="display:none">
+        <div class="form-floating mb-3">
+            <input class="form-control" id="tokenAddress" type="text" placeholder="Token Address" />
+            <label for="tokenAddress">Token Address</label>
+        </div>
+        <div class="mb-3" id="token_info" style="display:none">
+            <label class="form-label d-block" id="tokenName">Name:</label>
+            <label class="form-label d-block" id="tokenSymbol">Symbol:</label>
+        </div>
+        <div class="form-floating mb-3">
+            <input class="form-control" id="amount" type="text" placeholder="Amount to Lock" />
+            <label for="amount">Amount to Lock</label>
+        </div>
+        <div class="form-floating mb-3">
+            <select class="form-select" id="time" aria-label="Time">
+                <option value="seconds">Seconds</option>
+                <option value="minutes">Minutes</option>
+                <option value="hours">Hours</option>
+                <option value="days">Days</option>
+                <option value="weeks">Weeks</option>
+                <option value="months" selected="selected">Months</option>
+                <option value="years">Years</option>
+                <option value="date">Until Date</option>
+            </select>
+            <label for="time">Time</label>
+        </div>
+        <div class="form-floating mb-3" id="period-div">
+            <input class="form-control" id="period" type="text" placeholder="Period" />
+            <label for="period">Period</label>
+        </div>
+        <div class="form-floating mb-3" id="date-div" style="display:none">
+            <input class="form-control" id="date" type="date" placeholder="Date" />
+            <label for="date">Date</label>
+        </div>
+
+        <div class="d-grid form-floating mb-3">
+            <button class="btn btn-primary btn-lg" id="lock-tokens" type="button">Lock Tokens</button>
+        </div>
+        <div class="d-grid form-floating">
+            <button class="btn btn-secondary btn-lg" id="cancel-add" type="button">Cancel</button>
+        </div>
+    </form>
+
+</div>
+
+</div>
+</div>
+</div>
+</div>
+
+<script src="bundle.js" type="text/javascript" charset="utf-8"></script>
+
+</body>
+</html>
