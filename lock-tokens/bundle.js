@@ -144,6 +144,31 @@ function encode_utf8(s) {
   return unescape(encodeURIComponent(s));
 }
 
+function convert_typed_amount(typed, num_decimals){
+  var amount
+  typed = typed.replace(',','.')
+  var pos = typed.indexOf('.')
+  if (pos < 0) {
+    amount = typed + "0".repeat(num_decimals)
+  }else{
+    var num_trailing = typed.length - pos - 1
+    var to_add = num_decimals - num_trailing
+    typed = typed.substring(0, pos) + typed.substring(pos+1)
+    if (to_add > 0) {
+      amount = typed + "0".repeat(to_add)
+    }else if(to_add < 0) {
+      amount = typed.substring(0, typed.length + to_add)
+    }else{
+      amount = typed
+    }
+  }
+  if (amount.match(/[^0-9]/) != null){
+    return null  // invalid input
+  }
+  amount = amount.replace(/^0+/,'')  // remove leading zeros
+  return amount
+}
+
 function to_decimal_str(amount, num_decimals){
   var index = amount.length - num_decimals
   if (index > 0) {
@@ -198,6 +223,19 @@ async function lock_tokens(){
     return false
   }
 
+  if (decimals > 0) {
+    //amount = BigInt(amount) * BigInt("1" + "0".repeat(decimals))
+    //amount = amount.toString()
+    amount = convert_typed_amount(amount, decimals)
+    if (amount == null) {
+      swal.fire({
+        icon: 'error',
+        text: 'The amount is invalid'
+      })
+      return false
+    }
+  }
+
   var time_type = document.getElementById('time').value
 
   if (time_type == 'date') {
@@ -245,11 +283,6 @@ async function lock_tokens(){
     case 'seconds':
       interval = period;
     }
-  }
-
-  if (decimals > 0) {
-    amount = BigInt(amount) * BigInt("1" + "0".repeat(decimals))
-    amount = amount.toString()
   }
 
   var call = {
