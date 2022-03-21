@@ -1,8 +1,9 @@
 (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 var $ = require('jquery');
-var Swal = require('sweetalert2');
+var swal = require('sweetalert2');
 var herajs = require('@herajs/client');
 var chainId = '';
+var aergo = null;
 var showbox = false;
 
 function install_extension_click() {
@@ -61,13 +62,47 @@ async function startTxSendRequest(txdata) {
   const result = await aergoConnectCall('SEND_TX', 'AERGO_SEND_TX_RESULT', txdata);
   console.log('AERGO_SEND_TX_RESULT', result);
 
-  // TODO: wait for the txn receipt
+  swal.fire({
+    title: 'Transaction sent!',
+    text: 'Waiting inclusion on blockchain...',
+    allowEscapeKey: false,
+    allowOutsideClick: false,
+    onOpen: () => {
+      swal.showLoading();
+    }
+  })
+
+  if (!aergo) {
+    var url
+    if (chainId == "aergo.io") {
+      url = "mainnet-api-http.aergo.io"
+    } else if (chainId == "testnet.aergo.io") {
+      url = "testnet-api-http.aergo.io"
+    } else if (chainId == "alpha.aergo.io") {
+      url = "alpha-api-http.aergo.io"
+    }
+    url = 'http://' + url + ':7845'
+    aergo = new herajs.AergoClient({}, new herajs.GrpcWebProvider({url: url}))
+  }
+
+  // wait until the transaction is executed and included in a block, then get the receipt
+  const receipt = await aergo.waitForTransactionReceipt(result.hash);
+  console.log("receipt", receipt);
+
+  if (receipt.status != "SUCCESS") {
+    swal.fire({
+      icon: 'error',
+      title: 'Failed!',
+      text: receipt.result
+    })
+    return false
+  }
 
   var site = chainId.replace('aergo','aergoscan');
   if (site == 'aergoscan.io') site = 'mainnet.aergoscan.io';
   var url = 'https://' + site + '/transaction/' + result.hash;
 
-  Swal.fire({
+  swal.fire({
     icon: 'success',
     title: 'Congratulations!',
     html: '<br>Your token was created!<br>&nbsp;',
@@ -92,29 +127,6 @@ async function startTxSendRequest(txdata) {
 
 }
 
-
-function uint8ToBase64(buffer) {
-  var binary = '';
-  var len = buffer.byteLength;
-  for (var i = 0; i < len; i++) {
-    binary += String.fromCharCode(buffer[i]);
-  }
-  return window.btoa( binary );
-}
-
-function convertPayload(encoded) {
-  /*
-  var args = [];
-  const text = encodeBuffer(decodeToBytes(encoded, 'base58'), 'ascii');
-  const match = text.match(new RegExp(/({"name":"constructor","arguments":\[.*?\]})/));
-  if (match) {
-    args = JSON.parse(match[1]);
-  }
-  */
-  const contract = herajs.Contract.fromCode(encoded);
-  return uint8ToBase64(contract.asPayload([]));
-}
-
 function encode_utf8(s) {
   return unescape(encodeURIComponent(s));
 }
@@ -123,8 +135,7 @@ async function create_token(){
 
   const factory_address_testnet = "AmgXrg6JC7NT4URYhop1G4QaQme9WtdV7CX6dvawJekEk52bBBZw"
   const factory_address_mainnet = ""
-
-  var factory_address = factory_address_testnet
+  var factory_address
 
   var name = document.getElementById("tokenName").value
   var symbol = document.getElementById("tokenSymbol").value
@@ -135,7 +146,7 @@ async function create_token(){
 
   decimals = parseInt(decimals)
   if (decimals > 18) {
-    Swal.fire({
+    swal.fire({
       icon: 'error',
       text: 'The maximum number of decimals is 18'
     })
@@ -155,35 +166,39 @@ async function create_token(){
     if (document.getElementById("mintable").checked) {
       options["max_supply"] = max_supply
     } else {
-      Swal.fire({
+      swal.fire({
         icon: 'error',
-        //title: 'Compilation failed!',
         text: 'The Max Supply can only be used with the mintable extension'
       })
       return false
     }
   }
 
-  var call = {
-    Name: "new_token",
-    Args: [name, symbol, decimals, initial_supply, options, owner]
-  }
-
-//alert(JSON.stringify(call));
-//return false;
-
-  //content = btoa(encode_utf8(content));
-
   var account_address = await getActiveAccount();
 
+  if (chainId == "testnet.aergo.io") {
+    factory_address = factory_address_testnet
+  } else if (chainId == "aergo.io") {
+    factory_address = factory_address_mainnet
+  //} else if (chainId == "alpha.aergo.io") {
+  //  factory_address = factory_address_alphanet
+  } else {
+    swal.fire({
+      icon: 'error',
+      text: 'This network is not yet supported'
+    })
+    return false
+  }
+
   var txdata = {
-    type: 5, // call
+    type: 5,  // CALL
     from: account_address,
-    to: factory_address,
+    to:   factory_address,
     amount: 0,
-    //payload: convertPayload(JSON.stringify(call))
-    //payload_json: JSON.stringify(call)
-    payload_json: call
+    payload_json: {
+      Name: "new_token",
+      Args: [name, symbol, decimals, initial_supply, options, owner]
+    }
   }
 
   startTxSendRequest(txdata);
@@ -199,8 +214,8 @@ document.getElementById("create-token").onclick = create_token_click;
 },{"@herajs/client":2,"jquery":6,"sweetalert2":7}],2:[function(require,module,exports){
 (function (global,Buffer){
 /*!
- * herajs v0.20.3
- * (c) 2020 AERGO
+ * herajs v1.0.0
+ * (c) 2022 AERGO
  * Released under MIT license.
  */
 (function (global, factory) {
@@ -209,18 +224,40 @@ document.getElementById("create-token").onclick = create_token_click;
   (global = global || self, factory(global.herajs = {}));
 }(this, (function (exports) { 'use strict';
 
-  function _typeof(obj) {
-    if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") {
-      _typeof = function (obj) {
-        return typeof obj;
-      };
-    } else {
-      _typeof = function (obj) {
-        return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
-      };
+  function ownKeys(object, enumerableOnly) {
+    var keys = Object.keys(object);
+
+    if (Object.getOwnPropertySymbols) {
+      var symbols = Object.getOwnPropertySymbols(object);
+      enumerableOnly && (symbols = symbols.filter(function (sym) {
+        return Object.getOwnPropertyDescriptor(object, sym).enumerable;
+      })), keys.push.apply(keys, symbols);
     }
 
-    return _typeof(obj);
+    return keys;
+  }
+
+  function _objectSpread2(target) {
+    for (var i = 1; i < arguments.length; i++) {
+      var source = null != arguments[i] ? arguments[i] : {};
+      i % 2 ? ownKeys(Object(source), !0).forEach(function (key) {
+        _defineProperty(target, key, source[key]);
+      }) : Object.getOwnPropertyDescriptors ? Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) : ownKeys(Object(source)).forEach(function (key) {
+        Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+      });
+    }
+
+    return target;
+  }
+
+  function _typeof(obj) {
+    "@babel/helpers - typeof";
+
+    return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (obj) {
+      return typeof obj;
+    } : function (obj) {
+      return obj && "function" == typeof Symbol && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+    }, _typeof(obj);
   }
 
   function asyncGeneratorStep(gen, resolve, reject, _next, _throw, key, arg) {
@@ -278,6 +315,9 @@ document.getElementById("create-token").onclick = create_token_click;
   function _createClass(Constructor, protoProps, staticProps) {
     if (protoProps) _defineProperties(Constructor.prototype, protoProps);
     if (staticProps) _defineProperties(Constructor, staticProps);
+    Object.defineProperty(Constructor, "prototype", {
+      writable: false
+    });
     return Constructor;
   }
 
@@ -296,40 +336,6 @@ document.getElementById("create-token").onclick = create_token_click;
     return obj;
   }
 
-  function ownKeys(object, enumerableOnly) {
-    var keys = Object.keys(object);
-
-    if (Object.getOwnPropertySymbols) {
-      var symbols = Object.getOwnPropertySymbols(object);
-      if (enumerableOnly) symbols = symbols.filter(function (sym) {
-        return Object.getOwnPropertyDescriptor(object, sym).enumerable;
-      });
-      keys.push.apply(keys, symbols);
-    }
-
-    return keys;
-  }
-
-  function _objectSpread2(target) {
-    for (var i = 1; i < arguments.length; i++) {
-      var source = arguments[i] != null ? arguments[i] : {};
-
-      if (i % 2) {
-        ownKeys(Object(source), true).forEach(function (key) {
-          _defineProperty(target, key, source[key]);
-        });
-      } else if (Object.getOwnPropertyDescriptors) {
-        Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
-      } else {
-        ownKeys(Object(source)).forEach(function (key) {
-          Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
-        });
-      }
-    }
-
-    return target;
-  }
-
   function _inherits(subClass, superClass) {
     if (typeof superClass !== "function" && superClass !== null) {
       throw new TypeError("Super expression must either be null or a function");
@@ -341,6 +347,9 @@ document.getElementById("create-token").onclick = create_token_click;
         writable: true,
         configurable: true
       }
+    });
+    Object.defineProperty(subClass, "prototype", {
+      writable: false
     });
     if (superClass) _setPrototypeOf(subClass, superClass);
   }
@@ -361,13 +370,13 @@ document.getElementById("create-token").onclick = create_token_click;
     return _setPrototypeOf(o, p);
   }
 
-  function isNativeReflectConstruct() {
+  function _isNativeReflectConstruct() {
     if (typeof Reflect === "undefined" || !Reflect.construct) return false;
     if (Reflect.construct.sham) return false;
     if (typeof Proxy === "function") return true;
 
     try {
-      Date.prototype.toString.call(Reflect.construct(Date, [], function () {}));
+      Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {}));
       return true;
     } catch (e) {
       return false;
@@ -375,7 +384,7 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function _construct(Parent, args, Class) {
-    if (isNativeReflectConstruct()) {
+    if (_isNativeReflectConstruct()) {
       _construct = Reflect.construct;
     } else {
       _construct = function _construct(Parent, args, Class) {
@@ -440,25 +449,42 @@ document.getElementById("create-token").onclick = create_token_click;
   function _possibleConstructorReturn(self, call) {
     if (call && (typeof call === "object" || typeof call === "function")) {
       return call;
+    } else if (call !== void 0) {
+      throw new TypeError("Derived constructors may only return object or undefined");
     }
 
     return _assertThisInitialized(self);
   }
 
+  function _createSuper(Derived) {
+    var hasNativeReflectConstruct = _isNativeReflectConstruct();
+
+    return function _createSuperInternal() {
+      var Super = _getPrototypeOf(Derived),
+          result;
+
+      if (hasNativeReflectConstruct) {
+        var NewTarget = _getPrototypeOf(this).constructor;
+
+        result = Reflect.construct(Super, arguments, NewTarget);
+      } else {
+        result = Super.apply(this, arguments);
+      }
+
+      return _possibleConstructorReturn(this, result);
+    };
+  }
+
   function _slicedToArray(arr, i) {
-    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _nonIterableRest();
+    return _arrayWithHoles(arr) || _iterableToArrayLimit(arr, i) || _unsupportedIterableToArray(arr, i) || _nonIterableRest();
   }
 
   function _toConsumableArray(arr) {
-    return _arrayWithoutHoles(arr) || _iterableToArray(arr) || _nonIterableSpread();
+    return _arrayWithoutHoles(arr) || _iterableToArray(arr) || _unsupportedIterableToArray(arr) || _nonIterableSpread();
   }
 
   function _arrayWithoutHoles(arr) {
-    if (Array.isArray(arr)) {
-      for (var i = 0, arr2 = new Array(arr.length); i < arr.length; i++) arr2[i] = arr[i];
-
-      return arr2;
-    }
+    if (Array.isArray(arr)) return _arrayLikeToArray(arr);
   }
 
   function _arrayWithHoles(arr) {
@@ -466,21 +492,21 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function _iterableToArray(iter) {
-    if (Symbol.iterator in Object(iter) || Object.prototype.toString.call(iter) === "[object Arguments]") return Array.from(iter);
+    if (typeof Symbol !== "undefined" && iter[Symbol.iterator] != null || iter["@@iterator"] != null) return Array.from(iter);
   }
 
   function _iterableToArrayLimit(arr, i) {
-    if (!(Symbol.iterator in Object(arr) || Object.prototype.toString.call(arr) === "[object Arguments]")) {
-      return;
-    }
+    var _i = arr == null ? null : typeof Symbol !== "undefined" && arr[Symbol.iterator] || arr["@@iterator"];
 
+    if (_i == null) return;
     var _arr = [];
     var _n = true;
     var _d = false;
-    var _e = undefined;
+
+    var _s, _e;
 
     try {
-      for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) {
+      for (_i = _i.call(arr); !(_n = (_s = _i.next()).done); _n = true) {
         _arr.push(_s.value);
 
         if (i && _arr.length === i) break;
@@ -499,12 +525,86 @@ document.getElementById("create-token").onclick = create_token_click;
     return _arr;
   }
 
+  function _unsupportedIterableToArray(o, minLen) {
+    if (!o) return;
+    if (typeof o === "string") return _arrayLikeToArray(o, minLen);
+    var n = Object.prototype.toString.call(o).slice(8, -1);
+    if (n === "Object" && o.constructor) n = o.constructor.name;
+    if (n === "Map" || n === "Set") return Array.from(o);
+    if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _arrayLikeToArray(o, minLen);
+  }
+
+  function _arrayLikeToArray(arr, len) {
+    if (len == null || len > arr.length) len = arr.length;
+
+    for (var i = 0, arr2 = new Array(len); i < len; i++) arr2[i] = arr[i];
+
+    return arr2;
+  }
+
   function _nonIterableSpread() {
-    throw new TypeError("Invalid attempt to spread non-iterable instance");
+    throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
   }
 
   function _nonIterableRest() {
-    throw new TypeError("Invalid attempt to destructure non-iterable instance");
+    throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
+  }
+
+  function _createForOfIteratorHelper(o, allowArrayLike) {
+    var it = typeof Symbol !== "undefined" && o[Symbol.iterator] || o["@@iterator"];
+
+    if (!it) {
+      if (Array.isArray(o) || (it = _unsupportedIterableToArray(o)) || allowArrayLike && o && typeof o.length === "number") {
+        if (it) o = it;
+        var i = 0;
+
+        var F = function () {};
+
+        return {
+          s: F,
+          n: function () {
+            if (i >= o.length) return {
+              done: true
+            };
+            return {
+              done: false,
+              value: o[i++]
+            };
+          },
+          e: function (e) {
+            throw e;
+          },
+          f: F
+        };
+      }
+
+      throw new TypeError("Invalid attempt to iterate non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
+    }
+
+    var normalCompletion = true,
+        didErr = false,
+        err;
+    return {
+      s: function () {
+        it = it.call(o);
+      },
+      n: function () {
+        var step = it.next();
+        normalCompletion = step.done;
+        return step;
+      },
+      e: function (e) {
+        didErr = true;
+        err = e;
+      },
+      f: function () {
+        try {
+          if (!normalCompletion && it.return != null) it.return();
+        } finally {
+          if (didErr) throw err;
+        }
+      }
+    };
   }
 
   var commonjsGlobal = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof global !== 'undefined' ? global : typeof self !== 'undefined' ? self : {};
@@ -534,6 +634,25 @@ document.getElementById("create-token").onclick = create_token_click;
       var iteratorSymbol = $Symbol.iterator || "@@iterator";
       var asyncIteratorSymbol = $Symbol.asyncIterator || "@@asyncIterator";
       var toStringTagSymbol = $Symbol.toStringTag || "@@toStringTag";
+
+      function define(obj, key, value) {
+        Object.defineProperty(obj, key, {
+          value: value,
+          enumerable: true,
+          configurable: true,
+          writable: true
+        });
+        return obj[key];
+      }
+
+      try {
+        // IE 8 has a broken Object.defineProperty that only works on DOM objects.
+        define({}, "");
+      } catch (err) {
+        define = function define(obj, key, value) {
+          return obj[key] = value;
+        };
+      }
 
       function wrap(innerFn, outerFn, self, tryLocsList) {
         // If outerFn provided and outerFn.prototype is a Generator, then outerFn.prototype instanceof Generator.
@@ -591,11 +710,9 @@ document.getElementById("create-token").onclick = create_token_click;
 
 
       var IteratorPrototype = {};
-
-      IteratorPrototype[iteratorSymbol] = function () {
+      define(IteratorPrototype, iteratorSymbol, function () {
         return this;
-      };
-
+      });
       var getProto = Object.getPrototypeOf;
       var NativeIteratorPrototype = getProto && getProto(getProto(values([])));
 
@@ -606,16 +723,17 @@ document.getElementById("create-token").onclick = create_token_click;
       }
 
       var Gp = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(IteratorPrototype);
-      GeneratorFunction.prototype = Gp.constructor = GeneratorFunctionPrototype;
-      GeneratorFunctionPrototype.constructor = GeneratorFunction;
-      GeneratorFunctionPrototype[toStringTagSymbol] = GeneratorFunction.displayName = "GeneratorFunction"; // Helper for defining the .next, .throw, and .return methods of the
+      GeneratorFunction.prototype = GeneratorFunctionPrototype;
+      define(Gp, "constructor", GeneratorFunctionPrototype);
+      define(GeneratorFunctionPrototype, "constructor", GeneratorFunction);
+      GeneratorFunction.displayName = define(GeneratorFunctionPrototype, toStringTagSymbol, "GeneratorFunction"); // Helper for defining the .next, .throw, and .return methods of the
       // Iterator interface in terms of a single ._invoke method.
 
       function defineIteratorMethods(prototype) {
         ["next", "throw", "return"].forEach(function (method) {
-          prototype[method] = function (arg) {
+          define(prototype, method, function (arg) {
             return this._invoke(method, arg);
-          };
+          });
         });
       }
 
@@ -631,10 +749,7 @@ document.getElementById("create-token").onclick = create_token_click;
           Object.setPrototypeOf(genFun, GeneratorFunctionPrototype);
         } else {
           genFun.__proto__ = GeneratorFunctionPrototype;
-
-          if (!(toStringTagSymbol in genFun)) {
-            genFun[toStringTagSymbol] = "GeneratorFunction";
-          }
+          define(genFun, toStringTagSymbol, "GeneratorFunction");
         }
 
         genFun.prototype = Object.create(Gp);
@@ -651,7 +766,7 @@ document.getElementById("create-token").onclick = create_token_click;
         };
       };
 
-      function AsyncIterator(generator) {
+      function AsyncIterator(generator, PromiseImpl) {
         function invoke(method, arg, resolve, reject) {
           var record = tryCatch(generator[method], generator, arg);
 
@@ -662,14 +777,14 @@ document.getElementById("create-token").onclick = create_token_click;
             var value = result.value;
 
             if (value && _typeof(value) === "object" && hasOwn.call(value, "__await")) {
-              return Promise.resolve(value.__await).then(function (value) {
+              return PromiseImpl.resolve(value.__await).then(function (value) {
                 invoke("next", value, resolve, reject);
               }, function (err) {
                 invoke("throw", err, resolve, reject);
               });
             }
 
-            return Promise.resolve(value).then(function (unwrapped) {
+            return PromiseImpl.resolve(value).then(function (unwrapped) {
               // When a yielded Promise is resolved, its final value becomes
               // the .value of the Promise<{value,done}> result for the
               // current iteration.
@@ -687,7 +802,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
         function enqueue(method, arg) {
           function callInvokeWithMethodAndArg() {
-            return new Promise(function (resolve, reject) {
+            return new PromiseImpl(function (resolve, reject) {
               invoke(method, arg, resolve, reject);
             });
           }
@@ -715,17 +830,16 @@ document.getElementById("create-token").onclick = create_token_click;
       }
 
       defineIteratorMethods(AsyncIterator.prototype);
-
-      AsyncIterator.prototype[asyncIteratorSymbol] = function () {
+      define(AsyncIterator.prototype, asyncIteratorSymbol, function () {
         return this;
-      };
-
+      });
       exports.AsyncIterator = AsyncIterator; // Note that simple async functions are implemented on top of
       // AsyncIterator objects; they just return a Promise for the value of
       // the final result produced by the iterator.
 
-      exports.async = function (innerFn, outerFn, self, tryLocsList) {
-        var iter = new AsyncIterator(wrap(innerFn, outerFn, self, tryLocsList));
+      exports.async = function (innerFn, outerFn, self, tryLocsList, PromiseImpl) {
+        if (PromiseImpl === void 0) PromiseImpl = Promise;
+        var iter = new AsyncIterator(wrap(innerFn, outerFn, self, tryLocsList), PromiseImpl);
         return exports.isGeneratorFunction(outerFn) ? iter // If outerFn is a generator, return the full iterator.
         : iter.next().then(function (result) {
           return result.done ? result.value : iter.next();
@@ -889,19 +1003,18 @@ document.getElementById("create-token").onclick = create_token_click;
 
 
       defineIteratorMethods(Gp);
-      Gp[toStringTagSymbol] = "Generator"; // A Generator should always return itself as the iterator object when the
+      define(Gp, toStringTagSymbol, "Generator"); // A Generator should always return itself as the iterator object when the
       // @@iterator function is called on it. Some browsers' implementations of the
       // iterator prototype chain incorrectly implement this, causing the Generator
       // object to not be returned from this call. This ensures that doesn't happen.
       // See https://github.com/facebook/regenerator/issues/274 for more details.
 
-      Gp[iteratorSymbol] = function () {
+      define(Gp, iteratorSymbol, function () {
         return this;
-      };
-
-      Gp.toString = function () {
+      });
+      define(Gp, "toString", function () {
         return "[object Generator]";
-      };
+      });
 
       function pushTryEntry(locs) {
         var entry = {
@@ -1213,14 +1326,19 @@ document.getElementById("create-token").onclick = create_token_click;
     } catch (accidentalStrictMode) {
       // This module should not be running in strict mode, so the above
       // assignment should always work unless something is misconfigured. Just
-      // in case runtime.js accidentally runs in strict mode, we can escape
+      // in case runtime.js accidentally runs in strict mode, in modern engines
+      // we can explicitly access globalThis. In older engines we can escape
       // strict mode using a global Function call. This could conceivably fail
       // if a Content Security Policy forbids using Function, but in that case
       // the proper solution is to fix the accidental strict mode problem. If
       // you've misconfigured your bundler to force strict mode and applied a
       // CSP to forbid Function, and you're not willing to fix either of those
       // problems, please detail your unique predicament in a GitHub issue.
-      Function("r", "regeneratorRuntime = r")(runtime);
+      if ((typeof globalThis === "undefined" ? "undefined" : _typeof(globalThis)) === "object") {
+        globalThis.regeneratorRuntime = runtime;
+      } else {
+        Function("r", "regeneratorRuntime = r")(runtime);
+      }
     }
   });
 
@@ -3311,6022 +3429,7904 @@ document.getElementById("create-token").onclick = create_token_click;
     return Object.defineProperties(fn, getOwnPropertyDescriptors(original));
   }
 
-  var $jscomp = $jscomp || {};
-  $jscomp.scope = {};
+  var googleProtobuf = createCommonjsModule(function (module, exports) {
+    var $jscomp = $jscomp || {};
+    $jscomp.scope = {};
 
-  $jscomp.findInternal = function (a, b, c) {
-    a instanceof String && (a = String(a));
+    $jscomp.findInternal = function (a, b, c) {
+      a instanceof String && (a = String(a));
 
-    for (var d = a.length, e = 0; e < d; e++) {
-      var f = a[e];
-      if (b.call(c, f, e, a)) return {
-        i: e,
-        v: f
+      for (var d = a.length, e = 0; e < d; e++) {
+        var f = a[e];
+        if (b.call(c, f, e, a)) return {
+          i: e,
+          v: f
+        };
+      }
+
+      return {
+        i: -1,
+        v: void 0
       };
-    }
-
-    return {
-      i: -1,
-      v: void 0
     };
-  };
 
-  $jscomp.ASSUME_ES5 = !1;
-  $jscomp.ASSUME_NO_NATIVE_MAP = !1;
-  $jscomp.ASSUME_NO_NATIVE_SET = !1;
-  $jscomp.SIMPLE_FROUND_POLYFILL = !1;
-  $jscomp.defineProperty = $jscomp.ASSUME_ES5 || "function" == typeof Object.defineProperties ? Object.defineProperty : function (a, b, c) {
-    a != Array.prototype && a != Object.prototype && (a[b] = c.value);
-  };
+    $jscomp.ASSUME_ES5 = !1;
+    $jscomp.ASSUME_NO_NATIVE_MAP = !1;
+    $jscomp.ASSUME_NO_NATIVE_SET = !1;
+    $jscomp.SIMPLE_FROUND_POLYFILL = !1;
+    $jscomp.defineProperty = $jscomp.ASSUME_ES5 || "function" == typeof Object.defineProperties ? Object.defineProperty : function (a, b, c) {
+      a != Array.prototype && a != Object.prototype && (a[b] = c.value);
+    };
 
-  $jscomp.getGlobal = function (a) {
-    return "undefined" != typeof window && window === a ? a : "undefined" != typeof commonjsGlobal && null != commonjsGlobal ? commonjsGlobal : a;
-  };
+    $jscomp.getGlobal = function (a) {
+      return "undefined" != typeof window && window === a ? a : "undefined" != typeof commonjsGlobal && null != commonjsGlobal ? commonjsGlobal : a;
+    };
 
-  $jscomp.global = $jscomp.getGlobal(commonjsGlobal);
+    $jscomp.global = $jscomp.getGlobal(commonjsGlobal);
 
-  $jscomp.polyfill = function (a, b, c, d) {
-    if (b) {
-      c = $jscomp.global;
+    $jscomp.polyfill = function (a, b, c, d) {
+      if (b) {
+        c = $jscomp.global;
+        a = a.split(".");
+
+        for (d = 0; d < a.length - 1; d++) {
+          var e = a[d];
+          e in c || (c[e] = {});
+          c = c[e];
+        }
+
+        a = a[a.length - 1];
+        d = c[a];
+        b = b(d);
+        b != d && null != b && $jscomp.defineProperty(c, a, {
+          configurable: !0,
+          writable: !0,
+          value: b
+        });
+      }
+    };
+
+    $jscomp.polyfill("Array.prototype.findIndex", function (a) {
+      return a ? a : function (a, c) {
+        return $jscomp.findInternal(this, a, c).i;
+      };
+    }, "es6", "es3");
+
+    $jscomp.checkStringArgs = function (a, b, c) {
+      if (null == a) throw new TypeError("The 'this' value for String.prototype." + c + " must not be null or undefined");
+      if (b instanceof RegExp) throw new TypeError("First argument to String.prototype." + c + " must not be a regular expression");
+      return a + "";
+    };
+
+    $jscomp.polyfill("String.prototype.endsWith", function (a) {
+      return a ? a : function (a, c) {
+        var b = $jscomp.checkStringArgs(this, a, "endsWith");
+        a += "";
+        void 0 === c && (c = b.length);
+        c = Math.max(0, Math.min(c | 0, b.length));
+
+        for (var e = a.length; 0 < e && 0 < c;) {
+          if (b[--c] != a[--e]) return !1;
+        }
+
+        return 0 >= e;
+      };
+    }, "es6", "es3");
+    $jscomp.polyfill("Array.prototype.find", function (a) {
+      return a ? a : function (a, c) {
+        return $jscomp.findInternal(this, a, c).v;
+      };
+    }, "es6", "es3");
+    $jscomp.polyfill("String.prototype.startsWith", function (a) {
+      return a ? a : function (a, c) {
+        var b = $jscomp.checkStringArgs(this, a, "startsWith");
+        a += "";
+        var e = b.length,
+            f = a.length;
+        c = Math.max(0, Math.min(c | 0, b.length));
+
+        for (var g = 0; g < f && c < e;) {
+          if (b[c++] != a[g++]) return !1;
+        }
+
+        return g >= f;
+      };
+    }, "es6", "es3");
+    $jscomp.polyfill("String.prototype.repeat", function (a) {
+      return a ? a : function (a) {
+        var b = $jscomp.checkStringArgs(this, null, "repeat");
+        if (0 > a || 1342177279 < a) throw new RangeError("Invalid count value");
+        a |= 0;
+
+        for (var d = ""; a;) {
+          if (a & 1 && (d += b), a >>>= 1) b += b;
+        }
+
+        return d;
+      };
+    }, "es6", "es3");
+    var COMPILED = !0,
+        goog = goog || {};
+    goog.global = commonjsGlobal || self;
+
+    goog.isDef = function (a) {
+      return void 0 !== a;
+    };
+
+    goog.isString = function (a) {
+      return "string" == typeof a;
+    };
+
+    goog.isBoolean = function (a) {
+      return "boolean" == typeof a;
+    };
+
+    goog.isNumber = function (a) {
+      return "number" == typeof a;
+    };
+
+    goog.exportPath_ = function (a, b, c) {
       a = a.split(".");
+      c = c || goog.global;
+      a[0] in c || "undefined" == typeof c.execScript || c.execScript("var " + a[0]);
 
-      for (d = 0; d < a.length - 1; d++) {
-        var e = a[d];
-        e in c || (c[e] = {});
-        c = c[e];
+      for (var d; a.length && (d = a.shift());) {
+        !a.length && goog.isDef(b) ? c[d] = b : c = c[d] && c[d] !== Object.prototype[d] ? c[d] : c[d] = {};
       }
-
-      a = a[a.length - 1];
-      d = c[a];
-      b = b(d);
-      b != d && null != b && $jscomp.defineProperty(c, a, {
-        configurable: !0,
-        writable: !0,
-        value: b
-      });
-    }
-  };
-
-  $jscomp.polyfill("Array.prototype.findIndex", function (a) {
-    return a ? a : function (a, c) {
-      return $jscomp.findInternal(this, a, c).i;
     };
-  }, "es6", "es3");
 
-  $jscomp.checkStringArgs = function (a, b, c) {
-    if (null == a) throw new TypeError("The 'this' value for String.prototype." + c + " must not be null or undefined");
-    if (b instanceof RegExp) throw new TypeError("First argument to String.prototype." + c + " must not be a regular expression");
-    return a + "";
-  };
+    goog.define = function (a, b) {
 
-  $jscomp.polyfill("String.prototype.startsWith", function (a) {
-    return a ? a : function (a, c) {
-      var b = $jscomp.checkStringArgs(this, a, "startsWith");
-      a += "";
-      var e = b.length,
-          f = a.length;
-      c = Math.max(0, Math.min(c | 0, b.length));
-
-      for (var g = 0; g < f && c < e;) {
-        if (b[c++] != a[g++]) return !1;
-      }
-
-      return g >= f;
+      return b;
     };
-  }, "es6", "es3");
-  $jscomp.polyfill("String.prototype.endsWith", function (a) {
-    return a ? a : function (a, c) {
-      var b = $jscomp.checkStringArgs(this, a, "endsWith");
-      a += "";
-      void 0 === c && (c = b.length);
-      c = Math.max(0, Math.min(c | 0, b.length));
 
-      for (var e = a.length; 0 < e && 0 < c;) {
-        if (b[--c] != a[--e]) return !1;
-      }
+    goog.FEATURESET_YEAR = 2012;
+    goog.DEBUG = !0;
+    goog.LOCALE = "en";
+    goog.TRUSTED_SITE = !0;
+    goog.STRICT_MODE_COMPATIBLE = !1;
+    goog.DISALLOW_TEST_ONLY_CODE =  !goog.DEBUG;
+    goog.ENABLE_CHROME_APP_SAFE_SCRIPT_LOADING = !1;
 
-      return 0 >= e;
+    goog.provide = function (a) {
+      if (goog.isInModuleLoader_()) throw Error("goog.provide cannot be used within a module.");
+      goog.constructNamespace_(a);
     };
-  }, "es6", "es3");
-  $jscomp.polyfill("String.prototype.repeat", function (a) {
-    return a ? a : function (a) {
-      var b = $jscomp.checkStringArgs(this, null, "repeat");
-      if (0 > a || 1342177279 < a) throw new RangeError("Invalid count value");
-      a |= 0;
 
-      for (var d = ""; a;) {
-        if (a & 1 && (d += b), a >>>= 1) b += b;
-      }
+    goog.constructNamespace_ = function (a, b) {
 
-      return d;
+      goog.exportPath_(a, b);
     };
-  }, "es6", "es3");
-  $jscomp.polyfill("Array.prototype.find", function (a) {
-    return a ? a : function (a, c) {
-      return $jscomp.findInternal(this, a, c).v;
+
+    goog.getScriptNonce = function (a) {
+      if (a && a != goog.global) return goog.getScriptNonce_(a.document);
+      null === goog.cspNonce_ && (goog.cspNonce_ = goog.getScriptNonce_(goog.global.document));
+      return goog.cspNonce_;
     };
-  }, "es6", "es3");
-  var COMPILED$1 = !0,
-      goog = goog || {};
-  goog.global = commonjsGlobal;
 
-  goog.isDef = function (a) {
-    return void 0 !== a;
-  };
+    goog.NONCE_PATTERN_ = /^[\w+/_-]+[=]{0,2}$/;
+    goog.cspNonce_ = null;
 
-  goog.isString = function (a) {
-    return "string" == typeof a;
-  };
-
-  goog.isBoolean = function (a) {
-    return "boolean" == typeof a;
-  };
-
-  goog.isNumber = function (a) {
-    return "number" == typeof a;
-  };
-
-  goog.exportPath_ = function (a, b, c) {
-    a = a.split(".");
-    c = c || goog.global;
-    a[0] in c || "undefined" == typeof c.execScript || c.execScript("var " + a[0]);
-
-    for (var d; a.length && (d = a.shift());) {
-      !a.length && goog.isDef(b) ? c[d] = b : c = c[d] && c[d] !== Object.prototype[d] ? c[d] : c[d] = {};
-    }
-  };
-
-  goog.define = function (a, b) {
-
-    goog.exportPath_(a, b);
-    return b;
-  };
-
-  goog.DEBUG = !0;
-  goog.LOCALE = "en";
-  goog.TRUSTED_SITE = !0;
-  goog.STRICT_MODE_COMPATIBLE = !1;
-  goog.DISALLOW_TEST_ONLY_CODE =  !goog.DEBUG;
-  goog.ENABLE_CHROME_APP_SAFE_SCRIPT_LOADING = !1;
-
-  goog.provide = function (a) {
-    if (goog.isInModuleLoader_()) throw Error("goog.provide cannot be used within a module.");
-    goog.constructNamespace_(a);
-  };
-
-  goog.constructNamespace_ = function (a, b) {
-
-    goog.exportPath_(a, b);
-  };
-
-  goog.getScriptNonce = function (a) {
-    if (a && a != goog.global) return goog.getScriptNonce_(a.document);
-    null === goog.cspNonce_ && (goog.cspNonce_ = goog.getScriptNonce_(goog.global.document));
-    return goog.cspNonce_;
-  };
-
-  goog.NONCE_PATTERN_ = /^[\w+/_-]+[=]{0,2}$/;
-  goog.cspNonce_ = null;
-
-  goog.getScriptNonce_ = function (a) {
-    return (a = a.querySelector && a.querySelector("script[nonce]")) && (a = a.nonce || a.getAttribute("nonce")) && goog.NONCE_PATTERN_.test(a) ? a : "";
-  };
-
-  goog.VALID_MODULE_RE_ = /^[a-zA-Z_$][a-zA-Z0-9._$]*$/;
-
-  goog.module = function (a) {
-    if (!goog.isString(a) || !a || -1 == a.search(goog.VALID_MODULE_RE_)) throw Error("Invalid module identifier");
-    if (!goog.isInGoogModuleLoader_()) throw Error("Module " + a + " has been loaded incorrectly. Note, modules cannot be loaded as normal scripts. They require some kind of pre-processing step. You're likely trying to load a module via a script tag or as a part of a concatenated bundle without rewriting the module. For more info see: https://github.com/google/closure-library/wiki/goog.module:-an-ES6-module-like-alternative-to-goog.provide.");
-    if (goog.moduleLoaderState_.moduleName) throw Error("goog.module may only be called once per module.");
-    goog.moduleLoaderState_.moduleName = a;
-  };
-
-  goog.module.get = function (a) {
-    return goog.module.getInternal_(a);
-  };
-
-  goog.module.getInternal_ = function (a) {
-
-    return null;
-  };
-
-  goog.ModuleType = {
-    ES6: "es6",
-    GOOG: "goog"
-  };
-  goog.moduleLoaderState_ = null;
-
-  goog.isInModuleLoader_ = function () {
-    return goog.isInGoogModuleLoader_() || goog.isInEs6ModuleLoader_();
-  };
-
-  goog.isInGoogModuleLoader_ = function () {
-    return !!goog.moduleLoaderState_ && goog.moduleLoaderState_.type == goog.ModuleType.GOOG;
-  };
-
-  goog.isInEs6ModuleLoader_ = function () {
-    if (goog.moduleLoaderState_ && goog.moduleLoaderState_.type == goog.ModuleType.ES6) return !0;
-    var a = goog.global.$jscomp;
-    return a ? "function" != typeof a.getCurrentModulePath ? !1 : !!a.getCurrentModulePath() : !1;
-  };
-
-  goog.module.declareLegacyNamespace = function () {
-    goog.moduleLoaderState_.declareLegacyNamespace = !0;
-  };
-
-  goog.declareModuleId = function (a) {
-
-    if (goog.moduleLoaderState_) goog.moduleLoaderState_.moduleName = a;else {
-      var b = goog.global.$jscomp;
-      if (!b || "function" != typeof b.getCurrentModulePath) throw Error('Module with namespace "' + a + '" has been loaded incorrectly.');
-      b = b.require(b.getCurrentModulePath());
-      goog.loadedModules_[a] = {
-        exports: b,
-        type: goog.ModuleType.ES6,
-        moduleId: a
-      };
-    }
-  };
-
-  goog.module.declareNamespace = goog.declareModuleId;
-
-  goog.setTestOnly = function (a) {
-    if (goog.DISALLOW_TEST_ONLY_CODE) throw a = a || "", Error("Importing test-only code into non-debug environment" + (a ? ": " + a : "."));
-  };
-
-  goog.forwardDeclare = function (a) {};
-
-  goog.getObjectByName = function (a, b) {
-    a = a.split(".");
-    b = b || goog.global;
-
-    for (var c = 0; c < a.length; c++) {
-      if (b = b[a[c]], !goog.isDefAndNotNull(b)) return null;
-    }
-
-    return b;
-  };
-
-  goog.globalize = function (a, b) {
-    b = b || goog.global;
-
-    for (var c in a) {
-      b[c] = a[c];
-    }
-  };
-
-  goog.addDependency = function (a, b, c, d) {
-  };
-
-  goog.ENABLE_DEBUG_LOADER = !0;
-
-  goog.logToConsole_ = function (a) {
-    goog.global.console && goog.global.console.error(a);
-  };
-
-  goog.require = function (a) {
-  };
-
-  goog.requireType = function (a) {
-    return {};
-  };
-
-  goog.basePath = "";
-
-  goog.nullFunction = function () {};
-
-  goog.abstractMethod = function () {
-    throw Error("unimplemented abstract method");
-  };
-
-  goog.addSingletonGetter = function (a) {
-    a.instance_ = void 0;
-
-    a.getInstance = function () {
-      if (a.instance_) return a.instance_;
-      goog.DEBUG && (goog.instantiatedSingletons_[goog.instantiatedSingletons_.length] = a);
-      return a.instance_ = new a();
+    goog.getScriptNonce_ = function (a) {
+      return (a = a.querySelector && a.querySelector("script[nonce]")) && (a = a.nonce || a.getAttribute("nonce")) && goog.NONCE_PATTERN_.test(a) ? a : "";
     };
-  };
 
-  goog.instantiatedSingletons_ = [];
-  goog.LOAD_MODULE_USING_EVAL = !0;
-  goog.SEAL_MODULE_EXPORTS = goog.DEBUG;
-  goog.loadedModules_ = {};
-  goog.DEPENDENCIES_ENABLED = !COMPILED$1 ;
-  goog.TRANSPILE = "detect";
-  goog.ASSUME_ES_MODULES_TRANSPILED = !1;
-  goog.TRANSPILE_TO_LANGUAGE = "";
-  goog.TRANSPILER = "transpile.js";
-  goog.hasBadLetScoping = null;
+    goog.VALID_MODULE_RE_ = /^[a-zA-Z_$][a-zA-Z0-9._$]*$/;
 
-  goog.useSafari10Workaround = function () {
-    if (null == goog.hasBadLetScoping) {
-      try {
-        var a = !eval('"use strict";let x = 1; function f() { return typeof x; };f() == "number";');
-      } catch (b) {
-        a = !1;
-      }
+    goog.module = function (a) {
+      if (!goog.isString(a) || !a || -1 == a.search(goog.VALID_MODULE_RE_)) throw Error("Invalid module identifier");
+      if (!goog.isInGoogModuleLoader_()) throw Error("Module " + a + " has been loaded incorrectly. Note, modules cannot be loaded as normal scripts. They require some kind of pre-processing step. You're likely trying to load a module via a script tag or as a part of a concatenated bundle without rewriting the module. For more info see: https://github.com/google/closure-library/wiki/goog.module:-an-ES6-module-like-alternative-to-goog.provide.");
+      if (goog.moduleLoaderState_.moduleName) throw Error("goog.module may only be called once per module.");
+      goog.moduleLoaderState_.moduleName = a;
+    };
 
-      goog.hasBadLetScoping = a;
-    }
+    goog.module.get = function (a) {
+      return goog.module.getInternal_(a);
+    };
 
-    return goog.hasBadLetScoping;
-  };
+    goog.module.getInternal_ = function (a) {
 
-  goog.workaroundSafari10EvalBug = function (a) {
-    return "(function(){" + a + "\n;})();\n";
-  };
-
-  goog.loadModule = function (a) {
-    var b = goog.moduleLoaderState_;
-
-    try {
-      goog.moduleLoaderState_ = {
-        moduleName: "",
-        declareLegacyNamespace: !1,
-        type: goog.ModuleType.GOOG
-      };
-      if (goog.isFunction(a)) var c = a.call(void 0, {});else if (goog.isString(a)) goog.useSafari10Workaround() && (a = goog.workaroundSafari10EvalBug(a)), c = goog.loadModuleFromSource_.call(void 0, a);else throw Error("Invalid module definition");
-      var d = goog.moduleLoaderState_.moduleName;
-      if (goog.isString(d) && d) goog.moduleLoaderState_.declareLegacyNamespace ? goog.constructNamespace_(d, c) : goog.SEAL_MODULE_EXPORTS && Object.seal && "object" == _typeof(c) && null != c && Object.seal(c), goog.loadedModules_[d] = {
-        exports: c,
-        type: goog.ModuleType.GOOG,
-        moduleId: goog.moduleLoaderState_.moduleName
-      };else throw Error('Invalid module name "' + d + '"');
-    } finally {
-      goog.moduleLoaderState_ = b;
-    }
-  };
-
-  goog.loadModuleFromSource_ = function (a) {
-    eval(a);
-    return {};
-  };
-
-  goog.normalizePath_ = function (a) {
-    a = a.split("/");
-
-    for (var b = 0; b < a.length;) {
-      "." == a[b] ? a.splice(b, 1) : b && ".." == a[b] && a[b - 1] && ".." != a[b - 1] ? a.splice(--b, 2) : b++;
-    }
-
-    return a.join("/");
-  };
-
-  goog.loadFileSync_ = function (a) {
-    if (goog.global.CLOSURE_LOAD_FILE_SYNC) return goog.global.CLOSURE_LOAD_FILE_SYNC(a);
-
-    try {
-      var b = new goog.global.XMLHttpRequest();
-      b.open("get", a, !1);
-      b.send();
-      return 0 == b.status || 200 == b.status ? b.responseText : null;
-    } catch (c) {
       return null;
-    }
-  };
+    };
 
-  goog.transpile_ = function (a, b, c) {
-    var d = goog.global.$jscomp;
-    d || (goog.global.$jscomp = d = {});
-    var e = d.transpile;
+    goog.ModuleType = {
+      ES6: "es6",
+      GOOG: "goog"
+    };
+    goog.moduleLoaderState_ = null;
 
-    if (!e) {
-      var f = goog.basePath + goog.TRANSPILER,
-          g = goog.loadFileSync_(f);
+    goog.isInModuleLoader_ = function () {
+      return goog.isInGoogModuleLoader_() || goog.isInEs6ModuleLoader_();
+    };
 
-      if (g) {
-        (function () {
-          eval(g + "\n//# sourceURL=" + f);
-        }).call(goog.global);
-        if (goog.global.$gwtExport && goog.global.$gwtExport.$jscomp && !goog.global.$gwtExport.$jscomp.transpile) throw Error('The transpiler did not properly export the "transpile" method. $gwtExport: ' + JSON.stringify(goog.global.$gwtExport));
-        goog.global.$jscomp.transpile = goog.global.$gwtExport.$jscomp.transpile;
-        d = goog.global.$jscomp;
-        e = d.transpile;
+    goog.isInGoogModuleLoader_ = function () {
+      return !!goog.moduleLoaderState_ && goog.moduleLoaderState_.type == goog.ModuleType.GOOG;
+    };
+
+    goog.isInEs6ModuleLoader_ = function () {
+      if (goog.moduleLoaderState_ && goog.moduleLoaderState_.type == goog.ModuleType.ES6) return !0;
+      var a = goog.global.$jscomp;
+      return a ? "function" != typeof a.getCurrentModulePath ? !1 : !!a.getCurrentModulePath() : !1;
+    };
+
+    goog.module.declareLegacyNamespace = function () {
+      goog.moduleLoaderState_.declareLegacyNamespace = !0;
+    };
+
+    goog.declareModuleId = function (a) {
+
+      if (goog.moduleLoaderState_) goog.moduleLoaderState_.moduleName = a;else {
+        var b = goog.global.$jscomp;
+        if (!b || "function" != typeof b.getCurrentModulePath) throw Error('Module with namespace "' + a + '" has been loaded incorrectly.');
+        b = b.require(b.getCurrentModulePath());
+        goog.loadedModules_[a] = {
+          exports: b,
+          type: goog.ModuleType.ES6,
+          moduleId: a
+        };
       }
-    }
+    };
 
-    e || (e = d.transpile = function (a, b) {
-      goog.logToConsole_(b + " requires transpilation but no transpiler was found.");
-      return a;
-    });
-    return e(a, b, c);
-  };
+    goog.setTestOnly = function (a) {
+      if (goog.DISALLOW_TEST_ONLY_CODE) throw a = a || "", Error("Importing test-only code into non-debug environment" + (a ? ": " + a : "."));
+    };
 
-  goog.typeOf = function (a) {
-    var b = _typeof(a);
+    goog.forwardDeclare = function (a) {};
 
-    if ("object" == b) {
-      if (a) {
-        if (a instanceof Array) return "array";
-        if (a instanceof Object) return b;
-        var c = Object.prototype.toString.call(a);
-        if ("[object Window]" == c) return "object";
-        if ("[object Array]" == c || "number" == typeof a.length && "undefined" != typeof a.splice && "undefined" != typeof a.propertyIsEnumerable && !a.propertyIsEnumerable("splice")) return "array";
-        if ("[object Function]" == c || "undefined" != typeof a.call && "undefined" != typeof a.propertyIsEnumerable && !a.propertyIsEnumerable("call")) return "function";
-      } else return "null";
-    } else if ("function" == b && "undefined" == typeof a.call) return "object";
-    return b;
-  };
+    goog.getObjectByName = function (a, b) {
+      a = a.split(".");
+      b = b || goog.global;
 
-  goog.isNull = function (a) {
-    return null === a;
-  };
-
-  goog.isDefAndNotNull = function (a) {
-    return null != a;
-  };
-
-  goog.isArray = function (a) {
-    return "array" == goog.typeOf(a);
-  };
-
-  goog.isArrayLike = function (a) {
-    var b = goog.typeOf(a);
-    return "array" == b || "object" == b && "number" == typeof a.length;
-  };
-
-  goog.isDateLike = function (a) {
-    return goog.isObject(a) && "function" == typeof a.getFullYear;
-  };
-
-  goog.isFunction = function (a) {
-    return "function" == goog.typeOf(a);
-  };
-
-  goog.isObject = function (a) {
-    var b = _typeof(a);
-
-    return "object" == b && null != a || "function" == b;
-  };
-
-  goog.getUid = function (a) {
-    return a[goog.UID_PROPERTY_] || (a[goog.UID_PROPERTY_] = ++goog.uidCounter_);
-  };
-
-  goog.hasUid = function (a) {
-    return !!a[goog.UID_PROPERTY_];
-  };
-
-  goog.removeUid = function (a) {
-    null !== a && "removeAttribute" in a && a.removeAttribute(goog.UID_PROPERTY_);
-
-    try {
-      delete a[goog.UID_PROPERTY_];
-    } catch (b) {}
-  };
-
-  goog.UID_PROPERTY_ = "closure_uid_" + (1E9 * Math.random() >>> 0);
-  goog.uidCounter_ = 0;
-  goog.getHashCode = goog.getUid;
-  goog.removeHashCode = goog.removeUid;
-
-  goog.cloneObject = function (a) {
-    var b = goog.typeOf(a);
-
-    if ("object" == b || "array" == b) {
-      if ("function" === typeof a.clone) return a.clone();
-      b = "array" == b ? [] : {};
-
-      for (var c in a) {
-        b[c] = goog.cloneObject(a[c]);
+      for (var c = 0; c < a.length; c++) {
+        if (b = b[a[c]], !goog.isDefAndNotNull(b)) return null;
       }
 
       return b;
-    }
+    };
 
-    return a;
-  };
+    goog.globalize = function (a, b) {
+      b = b || goog.global;
 
-  goog.bindNative_ = function (a, b, c) {
-    return a.call.apply(a.bind, arguments);
-  };
+      for (var c in a) {
+        b[c] = a[c];
+      }
+    };
 
-  goog.bindJs_ = function (a, b, c) {
-    if (!a) throw Error();
+    goog.addDependency = function (a, b, c, d) {
+    };
 
-    if (2 < arguments.length) {
-      var d = Array.prototype.slice.call(arguments, 2);
-      return function () {
-        var c = Array.prototype.slice.call(arguments);
-        Array.prototype.unshift.apply(c, d);
-        return a.apply(b, c);
+    goog.ENABLE_DEBUG_LOADER = !0;
+
+    goog.logToConsole_ = function (a) {
+      goog.global.console && goog.global.console.error(a);
+    };
+
+    goog.require = function (a) {
+    };
+
+    goog.requireType = function (a) {
+      return {};
+    };
+
+    goog.basePath = "";
+
+    goog.nullFunction = function () {};
+
+    goog.abstractMethod = function () {
+      throw Error("unimplemented abstract method");
+    };
+
+    goog.addSingletonGetter = function (a) {
+      a.instance_ = void 0;
+
+      a.getInstance = function () {
+        if (a.instance_) return a.instance_;
+        goog.DEBUG && (goog.instantiatedSingletons_[goog.instantiatedSingletons_.length] = a);
+        return a.instance_ = new a();
       };
-    }
-
-    return function () {
-      return a.apply(b, arguments);
     };
-  };
 
-  goog.bind = function (a, b, c) {
-    Function.prototype.bind && -1 != Function.prototype.bind.toString().indexOf("native code") ? goog.bind = goog.bindNative_ : goog.bind = goog.bindJs_;
-    return goog.bind.apply(null, arguments);
-  };
+    goog.instantiatedSingletons_ = [];
+    goog.LOAD_MODULE_USING_EVAL = !0;
+    goog.SEAL_MODULE_EXPORTS = goog.DEBUG;
+    goog.loadedModules_ = {};
+    goog.DEPENDENCIES_ENABLED = !COMPILED ;
+    goog.TRANSPILE = "detect";
+    goog.ASSUME_ES_MODULES_TRANSPILED = !1;
+    goog.TRANSPILE_TO_LANGUAGE = "";
+    goog.TRANSPILER = "transpile.js";
+    goog.hasBadLetScoping = null;
 
-  goog.partial = function (a, b) {
-    var c = Array.prototype.slice.call(arguments, 1);
-    return function () {
-      var b = c.slice();
-      b.push.apply(b, arguments);
-      return a.apply(this, b);
-    };
-  };
-
-  goog.mixin = function (a, b) {
-    for (var c in b) {
-      a[c] = b[c];
-    }
-  };
-
-  goog.now = goog.TRUSTED_SITE && Date.now || function () {
-    return +new Date();
-  };
-
-  goog.globalEval = function (a) {
-    if (goog.global.execScript) goog.global.execScript(a, "JavaScript");else if (goog.global.eval) {
-      if (null == goog.evalWorksForGlobals_) {
+    goog.useSafari10Workaround = function () {
+      if (null == goog.hasBadLetScoping) {
         try {
-          goog.global.eval("var _evalTest_ = 1;");
-        } catch (d) {}
+          var a = !eval('"use strict";let x = 1; function f() { return typeof x; };f() == "number";');
+        } catch (b) {
+          a = !1;
+        }
 
-        if ("undefined" != typeof goog.global._evalTest_) {
+        goog.hasBadLetScoping = a;
+      }
+
+      return goog.hasBadLetScoping;
+    };
+
+    goog.workaroundSafari10EvalBug = function (a) {
+      return "(function(){" + a + "\n;})();\n";
+    };
+
+    goog.loadModule = function (a) {
+      var b = goog.moduleLoaderState_;
+
+      try {
+        goog.moduleLoaderState_ = {
+          moduleName: "",
+          declareLegacyNamespace: !1,
+          type: goog.ModuleType.GOOG
+        };
+        if (goog.isFunction(a)) var c = a.call(void 0, {});else if (goog.isString(a)) goog.useSafari10Workaround() && (a = goog.workaroundSafari10EvalBug(a)), c = goog.loadModuleFromSource_.call(void 0, a);else throw Error("Invalid module definition");
+        var d = goog.moduleLoaderState_.moduleName;
+        if (goog.isString(d) && d) goog.moduleLoaderState_.declareLegacyNamespace ? goog.constructNamespace_(d, c) : goog.SEAL_MODULE_EXPORTS && Object.seal && "object" == _typeof(c) && null != c && Object.seal(c), goog.loadedModules_[d] = {
+          exports: c,
+          type: goog.ModuleType.GOOG,
+          moduleId: goog.moduleLoaderState_.moduleName
+        };else throw Error('Invalid module name "' + d + '"');
+      } finally {
+        goog.moduleLoaderState_ = b;
+      }
+    };
+
+    goog.loadModuleFromSource_ = function (a) {
+      eval(a);
+      return {};
+    };
+
+    goog.normalizePath_ = function (a) {
+      a = a.split("/");
+
+      for (var b = 0; b < a.length;) {
+        "." == a[b] ? a.splice(b, 1) : b && ".." == a[b] && a[b - 1] && ".." != a[b - 1] ? a.splice(--b, 2) : b++;
+      }
+
+      return a.join("/");
+    };
+
+    goog.loadFileSync_ = function (a) {
+      if (goog.global.CLOSURE_LOAD_FILE_SYNC) return goog.global.CLOSURE_LOAD_FILE_SYNC(a);
+
+      try {
+        var b = new goog.global.XMLHttpRequest();
+        b.open("get", a, !1);
+        b.send();
+        return 0 == b.status || 200 == b.status ? b.responseText : null;
+      } catch (c) {
+        return null;
+      }
+    };
+
+    goog.transpile_ = function (a, b, c) {
+      var d = goog.global.$jscomp;
+      d || (goog.global.$jscomp = d = {});
+      var e = d.transpile;
+
+      if (!e) {
+        var f = goog.basePath + goog.TRANSPILER,
+            g = goog.loadFileSync_(f);
+
+        if (g) {
+          (function () {
+            (0, eval)(g + "\n//# sourceURL=" + f);
+          }).call(goog.global);
+          if (goog.global.$gwtExport && goog.global.$gwtExport.$jscomp && !goog.global.$gwtExport.$jscomp.transpile) throw Error('The transpiler did not properly export the "transpile" method. $gwtExport: ' + JSON.stringify(goog.global.$gwtExport));
+          goog.global.$jscomp.transpile = goog.global.$gwtExport.$jscomp.transpile;
+          d = goog.global.$jscomp;
+          e = d.transpile;
+        }
+      }
+
+      e || (e = d.transpile = function (a, b) {
+        goog.logToConsole_(b + " requires transpilation but no transpiler was found.");
+        return a;
+      });
+      return e(a, b, c);
+    };
+
+    goog.typeOf = function (a) {
+      var b = _typeof(a);
+
+      if ("object" == b) {
+        if (a) {
+          if (a instanceof Array) return "array";
+          if (a instanceof Object) return b;
+          var c = Object.prototype.toString.call(a);
+          if ("[object Window]" == c) return "object";
+          if ("[object Array]" == c || "number" == typeof a.length && "undefined" != typeof a.splice && "undefined" != typeof a.propertyIsEnumerable && !a.propertyIsEnumerable("splice")) return "array";
+          if ("[object Function]" == c || "undefined" != typeof a.call && "undefined" != typeof a.propertyIsEnumerable && !a.propertyIsEnumerable("call")) return "function";
+        } else return "null";
+      } else if ("function" == b && "undefined" == typeof a.call) return "object";
+      return b;
+    };
+
+    goog.isNull = function (a) {
+      return null === a;
+    };
+
+    goog.isDefAndNotNull = function (a) {
+      return null != a;
+    };
+
+    goog.isArray = function (a) {
+      return "array" == goog.typeOf(a);
+    };
+
+    goog.isArrayLike = function (a) {
+      var b = goog.typeOf(a);
+      return "array" == b || "object" == b && "number" == typeof a.length;
+    };
+
+    goog.isDateLike = function (a) {
+      return goog.isObject(a) && "function" == typeof a.getFullYear;
+    };
+
+    goog.isFunction = function (a) {
+      return "function" == goog.typeOf(a);
+    };
+
+    goog.isObject = function (a) {
+      var b = _typeof(a);
+
+      return "object" == b && null != a || "function" == b;
+    };
+
+    goog.getUid = function (a) {
+      return a[goog.UID_PROPERTY_] || (a[goog.UID_PROPERTY_] = ++goog.uidCounter_);
+    };
+
+    goog.hasUid = function (a) {
+      return !!a[goog.UID_PROPERTY_];
+    };
+
+    goog.removeUid = function (a) {
+      null !== a && "removeAttribute" in a && a.removeAttribute(goog.UID_PROPERTY_);
+
+      try {
+        delete a[goog.UID_PROPERTY_];
+      } catch (b) {}
+    };
+
+    goog.UID_PROPERTY_ = "closure_uid_" + (1E9 * Math.random() >>> 0);
+    goog.uidCounter_ = 0;
+    goog.getHashCode = goog.getUid;
+    goog.removeHashCode = goog.removeUid;
+
+    goog.cloneObject = function (a) {
+      var b = goog.typeOf(a);
+
+      if ("object" == b || "array" == b) {
+        if ("function" === typeof a.clone) return a.clone();
+        b = "array" == b ? [] : {};
+
+        for (var c in a) {
+          b[c] = goog.cloneObject(a[c]);
+        }
+
+        return b;
+      }
+
+      return a;
+    };
+
+    goog.bindNative_ = function (a, b, c) {
+      return a.call.apply(a.bind, arguments);
+    };
+
+    goog.bindJs_ = function (a, b, c) {
+      if (!a) throw Error();
+
+      if (2 < arguments.length) {
+        var d = Array.prototype.slice.call(arguments, 2);
+        return function () {
+          var c = Array.prototype.slice.call(arguments);
+          Array.prototype.unshift.apply(c, d);
+          return a.apply(b, c);
+        };
+      }
+
+      return function () {
+        return a.apply(b, arguments);
+      };
+    };
+
+    goog.bind = function (a, b, c) {
+      Function.prototype.bind && -1 != Function.prototype.bind.toString().indexOf("native code") ? goog.bind = goog.bindNative_ : goog.bind = goog.bindJs_;
+      return goog.bind.apply(null, arguments);
+    };
+
+    goog.partial = function (a, b) {
+      var c = Array.prototype.slice.call(arguments, 1);
+      return function () {
+        var b = c.slice();
+        b.push.apply(b, arguments);
+        return a.apply(this, b);
+      };
+    };
+
+    goog.mixin = function (a, b) {
+      for (var c in b) {
+        a[c] = b[c];
+      }
+    };
+
+    goog.now = goog.TRUSTED_SITE && Date.now || function () {
+      return +new Date();
+    };
+
+    goog.globalEval = function (a) {
+      if (goog.global.execScript) goog.global.execScript(a, "JavaScript");else if (goog.global.eval) {
+        if (null == goog.evalWorksForGlobals_) {
           try {
-            delete goog.global._evalTest_;
+            goog.global.eval("var _evalTest_ = 1;");
           } catch (d) {}
 
-          goog.evalWorksForGlobals_ = !0;
-        } else goog.evalWorksForGlobals_ = !1;
-      }
+          if ("undefined" != typeof goog.global._evalTest_) {
+            try {
+              delete goog.global._evalTest_;
+            } catch (d) {}
 
-      if (goog.evalWorksForGlobals_) goog.global.eval(a);else {
-        var b = goog.global.document,
-            c = b.createElement("SCRIPT");
-        c.type = "text/javascript";
-        c.defer = !1;
-        c.appendChild(b.createTextNode(a));
-        b.head.appendChild(c);
-        b.head.removeChild(c);
-      }
-    } else throw Error("goog.globalEval not available");
-  };
+            goog.evalWorksForGlobals_ = !0;
+          } else goog.evalWorksForGlobals_ = !1;
+        }
 
-  goog.evalWorksForGlobals_ = null;
-
-  goog.getCssName = function (a, b) {
-    if ("." == String(a).charAt(0)) throw Error('className passed in goog.getCssName must not start with ".". You passed: ' + a);
-
-    var c = function c(a) {
-      return goog.cssNameMapping_[a] || a;
-    },
-        d = function d(a) {
-      a = a.split("-");
-
-      for (var b = [], d = 0; d < a.length; d++) {
-        b.push(c(a[d]));
-      }
-
-      return b.join("-");
+        if (goog.evalWorksForGlobals_) goog.global.eval(a);else {
+          var b = goog.global.document,
+              c = b.createElement("SCRIPT");
+          c.type = "text/javascript";
+          c.defer = !1;
+          c.appendChild(b.createTextNode(a));
+          b.head.appendChild(c);
+          b.head.removeChild(c);
+        }
+      } else throw Error("goog.globalEval not available");
     };
 
-    d = goog.cssNameMapping_ ? "BY_WHOLE" == goog.cssNameMappingStyle_ ? c : d : function (a) {
+    goog.evalWorksForGlobals_ = null;
+
+    goog.getCssName = function (a, b) {
+      if ("." == String(a).charAt(0)) throw Error('className passed in goog.getCssName must not start with ".". You passed: ' + a);
+
+      var c = function c(a) {
+        return goog.cssNameMapping_[a] || a;
+      },
+          d = function d(a) {
+        a = a.split("-");
+
+        for (var b = [], d = 0; d < a.length; d++) {
+          b.push(c(a[d]));
+        }
+
+        return b.join("-");
+      };
+
+      d = goog.cssNameMapping_ ? "BY_WHOLE" == goog.cssNameMappingStyle_ ? c : d : function (a) {
+        return a;
+      };
+      a = b ? a + "-" + d(b) : d(a);
+      return goog.global.CLOSURE_CSS_NAME_MAP_FN ? goog.global.CLOSURE_CSS_NAME_MAP_FN(a) : a;
+    };
+
+    goog.setCssNameMapping = function (a, b) {
+      goog.cssNameMapping_ = a;
+      goog.cssNameMappingStyle_ = b;
+    };
+
+    goog.getMsg = function (a, b, c) {
+      c && c.html && (a = a.replace(/</g, "&lt;"));
+      b && (a = a.replace(/\{\$([^}]+)}/g, function (a, c) {
+        return null != b && c in b ? b[c] : a;
+      }));
       return a;
     };
-    a = b ? a + "-" + d(b) : d(a);
-    return goog.global.CLOSURE_CSS_NAME_MAP_FN ? goog.global.CLOSURE_CSS_NAME_MAP_FN(a) : a;
-  };
 
-  goog.setCssNameMapping = function (a, b) {
-    goog.cssNameMapping_ = a;
-    goog.cssNameMappingStyle_ = b;
-  };
-
-  goog.getMsg = function (a, b) {
-    b && (a = a.replace(/\{\$([^}]+)}/g, function (a, d) {
-      return null != b && d in b ? b[d] : a;
-    }));
-    return a;
-  };
-
-  goog.getMsgWithFallback = function (a, b) {
-    return a;
-  };
-
-  goog.exportSymbol = function (a, b, c) {
-    goog.exportPath_(a, b, c);
-  };
-
-  goog.exportProperty = function (a, b, c) {
-    a[b] = c;
-  };
-
-  goog.inherits = function (a, b) {
-    function c() {}
-
-    c.prototype = b.prototype;
-    a.superClass_ = b.prototype;
-    a.prototype = new c();
-    a.prototype.constructor = a;
-
-    a.base = function (a, c, f) {
-      for (var d = Array(arguments.length - 2), e = 2; e < arguments.length; e++) {
-        d[e - 2] = arguments[e];
-      }
-
-      return b.prototype[c].apply(a, d);
-    };
-  };
-
-  goog.base = function (a, b, c) {
-    var d = arguments.callee.caller;
-    if (goog.STRICT_MODE_COMPATIBLE || goog.DEBUG && !d) throw Error("arguments.caller not defined.  goog.base() cannot be used with strict mode code. See http://www.ecma-international.org/ecma-262/5.1/#sec-C");
-
-    if ("undefined" !== typeof d.superClass_) {
-      for (var e = Array(arguments.length - 1), f = 1; f < arguments.length; f++) {
-        e[f - 1] = arguments[f];
-      }
-
-      return d.superClass_.constructor.apply(a, e);
-    }
-
-    if ("string" != typeof b && "symbol" != _typeof(b)) throw Error("method names provided to goog.base must be a string or a symbol");
-    e = Array(arguments.length - 2);
-
-    for (f = 2; f < arguments.length; f++) {
-      e[f - 2] = arguments[f];
-    }
-
-    f = !1;
-
-    for (var g = a.constructor; g; g = g.superClass_ && g.superClass_.constructor) {
-      if (g.prototype[b] === d) f = !0;else if (f) return g.prototype[b].apply(a, e);
-    }
-
-    if (a[b] === d) return a.constructor.prototype[b].apply(a, e);
-    throw Error("goog.base called from a method of one name to a method of a different name");
-  };
-
-  goog.scope = function (a) {
-    if (goog.isInModuleLoader_()) throw Error("goog.scope is not supported within a module.");
-    a.call(goog.global);
-  };
-
-  goog.defineClass = function (a, b) {
-    var c = b.constructor,
-        d = b.statics;
-    c && c != Object.prototype.constructor || (c = function c() {
-      throw Error("cannot instantiate an interface (no constructor defined).");
-    });
-    c = goog.defineClass.createSealingConstructor_(c, a);
-    a && goog.inherits(c, a);
-    delete b.constructor;
-    delete b.statics;
-    goog.defineClass.applyProperties_(c.prototype, b);
-    null != d && (d instanceof Function ? d(c) : goog.defineClass.applyProperties_(c, d));
-    return c;
-  };
-
-  goog.defineClass.SEAL_CLASS_INSTANCES = goog.DEBUG;
-
-  goog.defineClass.createSealingConstructor_ = function (a, b) {
-    if (!goog.defineClass.SEAL_CLASS_INSTANCES) return a;
-
-    var c = !goog.defineClass.isUnsealable_(b),
-        d = function d() {
-      var b = a.apply(this, arguments) || this;
-      b[goog.UID_PROPERTY_] = b[goog.UID_PROPERTY_];
-      this.constructor === d && c && Object.seal instanceof Function && Object.seal(b);
-      return b;
+    goog.getMsgWithFallback = function (a, b) {
+      return a;
     };
 
-    return d;
-  };
-
-  goog.defineClass.isUnsealable_ = function (a) {
-    return a && a.prototype && a.prototype[goog.UNSEALABLE_CONSTRUCTOR_PROPERTY_];
-  };
-
-  goog.defineClass.OBJECT_PROTOTYPE_FIELDS_ = "constructor hasOwnProperty isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf".split(" ");
-
-  goog.defineClass.applyProperties_ = function (a, b) {
-    for (var c in b) {
-      Object.prototype.hasOwnProperty.call(b, c) && (a[c] = b[c]);
-    }
-
-    for (var d = 0; d < goog.defineClass.OBJECT_PROTOTYPE_FIELDS_.length; d++) {
-      c = goog.defineClass.OBJECT_PROTOTYPE_FIELDS_[d], Object.prototype.hasOwnProperty.call(b, c) && (a[c] = b[c]);
-    }
-  };
-
-  goog.tagUnsealableClass = function (a) {
-  };
-
-  goog.UNSEALABLE_CONSTRUCTOR_PROPERTY_ = "goog_defineClass_legacy_unsealable";
-  var jspb = {
-    BinaryConstants: {},
-    ConstBinaryMessage: function ConstBinaryMessage() {},
-    BinaryMessage: function BinaryMessage() {}
-  };
-  jspb.BinaryConstants.FieldType = {
-    INVALID: -1,
-    DOUBLE: 1,
-    FLOAT: 2,
-    INT64: 3,
-    UINT64: 4,
-    INT32: 5,
-    FIXED64: 6,
-    FIXED32: 7,
-    BOOL: 8,
-    STRING: 9,
-    GROUP: 10,
-    MESSAGE: 11,
-    BYTES: 12,
-    UINT32: 13,
-    ENUM: 14,
-    SFIXED32: 15,
-    SFIXED64: 16,
-    SINT32: 17,
-    SINT64: 18,
-    FHASH64: 30,
-    VHASH64: 31
-  };
-  jspb.BinaryConstants.WireType = {
-    INVALID: -1,
-    VARINT: 0,
-    FIXED64: 1,
-    DELIMITED: 2,
-    START_GROUP: 3,
-    END_GROUP: 4,
-    FIXED32: 5
-  };
-
-  jspb.BinaryConstants.FieldTypeToWireType = function (a) {
-    var b = jspb.BinaryConstants.FieldType,
-        c = jspb.BinaryConstants.WireType;
-
-    switch (a) {
-      case b.INT32:
-      case b.INT64:
-      case b.UINT32:
-      case b.UINT64:
-      case b.SINT32:
-      case b.SINT64:
-      case b.BOOL:
-      case b.ENUM:
-      case b.VHASH64:
-        return c.VARINT;
-
-      case b.DOUBLE:
-      case b.FIXED64:
-      case b.SFIXED64:
-      case b.FHASH64:
-        return c.FIXED64;
-
-      case b.STRING:
-      case b.MESSAGE:
-      case b.BYTES:
-        return c.DELIMITED;
-
-      case b.FLOAT:
-      case b.FIXED32:
-      case b.SFIXED32:
-        return c.FIXED32;
-
-      default:
-        return c.INVALID;
-    }
-  };
-
-  jspb.BinaryConstants.INVALID_FIELD_NUMBER = -1;
-  jspb.BinaryConstants.FLOAT32_EPS = 1.401298464324817E-45;
-  jspb.BinaryConstants.FLOAT32_MIN = 1.1754943508222875E-38;
-  jspb.BinaryConstants.FLOAT32_MAX = 3.4028234663852886E38;
-  jspb.BinaryConstants.FLOAT64_EPS = 4.9E-324;
-  jspb.BinaryConstants.FLOAT64_MIN = 2.2250738585072014E-308;
-  jspb.BinaryConstants.FLOAT64_MAX = 1.7976931348623157E308;
-  jspb.BinaryConstants.TWO_TO_20 = 1048576;
-  jspb.BinaryConstants.TWO_TO_23 = 8388608;
-  jspb.BinaryConstants.TWO_TO_31 = 2147483648;
-  jspb.BinaryConstants.TWO_TO_32 = 4294967296;
-  jspb.BinaryConstants.TWO_TO_52 = 4503599627370496;
-  jspb.BinaryConstants.TWO_TO_63 = 0x7fffffffffffffff;
-  jspb.BinaryConstants.TWO_TO_64 = 1.8446744073709552E19;
-  jspb.BinaryConstants.ZERO_HASH = "\x00\x00\x00\x00\x00\x00\x00\x00";
-  goog.dom = {};
-  goog.dom.NodeType = {
-    ELEMENT: 1,
-    ATTRIBUTE: 2,
-    TEXT: 3,
-    CDATA_SECTION: 4,
-    ENTITY_REFERENCE: 5,
-    ENTITY: 6,
-    PROCESSING_INSTRUCTION: 7,
-    COMMENT: 8,
-    DOCUMENT: 9,
-    DOCUMENT_TYPE: 10,
-    DOCUMENT_FRAGMENT: 11,
-    NOTATION: 12
-  };
-  goog.debug = {};
-
-  goog.debug.Error = function (a) {
-    if (Error.captureStackTrace) Error.captureStackTrace(this, goog.debug.Error);else {
-      var b = Error().stack;
-      b && (this.stack = b);
-    }
-    a && (this.message = String(a));
-    this.reportErrorToServer = !0;
-  };
-
-  goog.inherits(goog.debug.Error, Error);
-  goog.debug.Error.prototype.name = "CustomError";
-  goog.asserts = {};
-  goog.asserts.ENABLE_ASSERTS = goog.DEBUG;
-
-  goog.asserts.AssertionError = function (a, b) {
-    goog.debug.Error.call(this, goog.asserts.subs_(a, b));
-    this.messagePattern = a;
-  };
-
-  goog.inherits(goog.asserts.AssertionError, goog.debug.Error);
-  goog.asserts.AssertionError.prototype.name = "AssertionError";
-
-  goog.asserts.DEFAULT_ERROR_HANDLER = function (a) {
-    throw a;
-  };
-
-  goog.asserts.errorHandler_ = goog.asserts.DEFAULT_ERROR_HANDLER;
-
-  goog.asserts.subs_ = function (a, b) {
-    a = a.split("%s");
-
-    for (var c = "", d = a.length - 1, e = 0; e < d; e++) {
-      c += a[e] + (e < b.length ? b[e] : "%s");
-    }
-
-    return c + a[d];
-  };
-
-  goog.asserts.doAssertFailure_ = function (a, b, c, d) {
-    var e = "Assertion failed";
-
-    if (c) {
-      e += ": " + c;
-      var f = d;
-    } else a && (e += ": " + a, f = b);
-
-    a = new goog.asserts.AssertionError("" + e, f || []);
-    goog.asserts.errorHandler_(a);
-  };
-
-  goog.asserts.setErrorHandler = function (a) {
-    goog.asserts.ENABLE_ASSERTS && (goog.asserts.errorHandler_ = a);
-  };
-
-  goog.asserts.assert = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !a && goog.asserts.doAssertFailure_("", null, b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.fail = function (a, b) {
-    goog.asserts.ENABLE_ASSERTS && goog.asserts.errorHandler_(new goog.asserts.AssertionError("Failure" + (a ? ": " + a : ""), Array.prototype.slice.call(arguments, 1)));
-  };
-
-  goog.asserts.assertNumber = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !goog.isNumber(a) && goog.asserts.doAssertFailure_("Expected number but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertString = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !goog.isString(a) && goog.asserts.doAssertFailure_("Expected string but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertFunction = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !goog.isFunction(a) && goog.asserts.doAssertFailure_("Expected function but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertObject = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !goog.isObject(a) && goog.asserts.doAssertFailure_("Expected object but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertArray = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !goog.isArray(a) && goog.asserts.doAssertFailure_("Expected array but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertBoolean = function (a, b, c) {
-    goog.asserts.ENABLE_ASSERTS && !goog.isBoolean(a) && goog.asserts.doAssertFailure_("Expected boolean but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertElement = function (a, b, c) {
-    !goog.asserts.ENABLE_ASSERTS || goog.isObject(a) && a.nodeType == goog.dom.NodeType.ELEMENT || goog.asserts.doAssertFailure_("Expected Element but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertInstanceof = function (a, b, c, d) {
-    !goog.asserts.ENABLE_ASSERTS || a instanceof b || goog.asserts.doAssertFailure_("Expected instanceof %s but got %s.", [goog.asserts.getType_(b), goog.asserts.getType_(a)], c, Array.prototype.slice.call(arguments, 3));
-    return a;
-  };
-
-  goog.asserts.assertFinite = function (a, b, c) {
-    !goog.asserts.ENABLE_ASSERTS || "number" == typeof a && isFinite(a) || goog.asserts.doAssertFailure_("Expected %s to be a finite number but it is not.", [a], b, Array.prototype.slice.call(arguments, 2));
-    return a;
-  };
-
-  goog.asserts.assertObjectPrototypeIsIntact = function () {
-    for (var a in Object.prototype) {
-      goog.asserts.fail(a + " should not be enumerable in Object.prototype.");
-    }
-  };
-
-  goog.asserts.getType_ = function (a) {
-    return a instanceof Function ? a.displayName || a.name || "unknown type name" : a instanceof Object ? a.constructor.displayName || a.constructor.name || Object.prototype.toString.call(a) : null === a ? "null" : _typeof(a);
-  };
-
-  goog.array = {};
-  goog.NATIVE_ARRAY_PROTOTYPES = goog.TRUSTED_SITE;
-  goog.array.ASSUME_NATIVE_FUNCTIONS = !1;
-
-  goog.array.peek = function (a) {
-    return a[a.length - 1];
-  };
-
-  goog.array.last = goog.array.peek;
-  goog.array.indexOf = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.indexOf) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.indexOf.call(a, b, c);
-  } : function (a, b, c) {
-    c = null == c ? 0 : 0 > c ? Math.max(0, a.length + c) : c;
-    if (goog.isString(a)) return goog.isString(b) && 1 == b.length ? a.indexOf(b, c) : -1;
-
-    for (; c < a.length; c++) {
-      if (c in a && a[c] === b) return c;
-    }
-
-    return -1;
-  };
-  goog.array.lastIndexOf = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.lastIndexOf) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.lastIndexOf.call(a, b, null == c ? a.length - 1 : c);
-  } : function (a, b, c) {
-    c = null == c ? a.length - 1 : c;
-    0 > c && (c = Math.max(0, a.length + c));
-    if (goog.isString(a)) return goog.isString(b) && 1 == b.length ? a.lastIndexOf(b, c) : -1;
-
-    for (; 0 <= c; c--) {
-      if (c in a && a[c] === b) return c;
-    }
-
-    return -1;
-  };
-  goog.array.forEach = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.forEach) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    Array.prototype.forEach.call(a, b, c);
-  } : function (a, b, c) {
-    for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
-      f in e && b.call(c, e[f], f, a);
-    }
-  };
-
-  goog.array.forEachRight = function (a, b, c) {
-    var d = a.length,
-        e = goog.isString(a) ? a.split("") : a;
-
-    for (--d; 0 <= d; --d) {
-      d in e && b.call(c, e[d], d, a);
-    }
-  };
-
-  goog.array.filter = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.filter) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.filter.call(a, b, c);
-  } : function (a, b, c) {
-    for (var d = a.length, e = [], f = 0, g = goog.isString(a) ? a.split("") : a, h = 0; h < d; h++) {
-      if (h in g) {
-        var k = g[h];
-        b.call(c, k, h, a) && (e[f++] = k);
-      }
-    }
-
-    return e;
-  };
-  goog.array.map = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.map) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.map.call(a, b, c);
-  } : function (a, b, c) {
-    for (var d = a.length, e = Array(d), f = goog.isString(a) ? a.split("") : a, g = 0; g < d; g++) {
-      g in f && (e[g] = b.call(c, f[g], g, a));
-    }
-
-    return e;
-  };
-  goog.array.reduce = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.reduce) ? function (a, b, c, d) {
-    goog.asserts.assert(null != a.length);
-    d && (b = goog.bind(b, d));
-    return Array.prototype.reduce.call(a, b, c);
-  } : function (a, b, c, d) {
-    var e = c;
-    goog.array.forEach(a, function (c, g) {
-      e = b.call(d, e, c, g, a);
-    });
-    return e;
-  };
-  goog.array.reduceRight = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.reduceRight) ? function (a, b, c, d) {
-    goog.asserts.assert(null != a.length);
-    goog.asserts.assert(null != b);
-    d && (b = goog.bind(b, d));
-    return Array.prototype.reduceRight.call(a, b, c);
-  } : function (a, b, c, d) {
-    var e = c;
-    goog.array.forEachRight(a, function (c, g) {
-      e = b.call(d, e, c, g, a);
-    });
-    return e;
-  };
-  goog.array.some = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.some) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.some.call(a, b, c);
-  } : function (a, b, c) {
-    for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
-      if (f in e && b.call(c, e[f], f, a)) return !0;
-    }
-
-    return !1;
-  };
-  goog.array.every = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.every) ? function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.every.call(a, b, c);
-  } : function (a, b, c) {
-    for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
-      if (f in e && !b.call(c, e[f], f, a)) return !1;
-    }
-
-    return !0;
-  };
-
-  goog.array.count = function (a, b, c) {
-    var d = 0;
-    goog.array.forEach(a, function (a, f, g) {
-      b.call(c, a, f, g) && ++d;
-    }, c);
-    return d;
-  };
-
-  goog.array.find = function (a, b, c) {
-    b = goog.array.findIndex(a, b, c);
-    return 0 > b ? null : goog.isString(a) ? a.charAt(b) : a[b];
-  };
-
-  goog.array.findIndex = function (a, b, c) {
-    for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
-      if (f in e && b.call(c, e[f], f, a)) return f;
-    }
-
-    return -1;
-  };
-
-  goog.array.findRight = function (a, b, c) {
-    b = goog.array.findIndexRight(a, b, c);
-    return 0 > b ? null : goog.isString(a) ? a.charAt(b) : a[b];
-  };
-
-  goog.array.findIndexRight = function (a, b, c) {
-    var d = a.length,
-        e = goog.isString(a) ? a.split("") : a;
-
-    for (--d; 0 <= d; d--) {
-      if (d in e && b.call(c, e[d], d, a)) return d;
-    }
-
-    return -1;
-  };
-
-  goog.array.contains = function (a, b) {
-    return 0 <= goog.array.indexOf(a, b);
-  };
-
-  goog.array.isEmpty = function (a) {
-    return 0 == a.length;
-  };
-
-  goog.array.clear = function (a) {
-    if (!goog.isArray(a)) for (var b = a.length - 1; 0 <= b; b--) {
-      delete a[b];
-    }
-    a.length = 0;
-  };
-
-  goog.array.insert = function (a, b) {
-    goog.array.contains(a, b) || a.push(b);
-  };
-
-  goog.array.insertAt = function (a, b, c) {
-    goog.array.splice(a, c, 0, b);
-  };
-
-  goog.array.insertArrayAt = function (a, b, c) {
-    goog.partial(goog.array.splice, a, c, 0).apply(null, b);
-  };
-
-  goog.array.insertBefore = function (a, b, c) {
-    var d;
-    2 == arguments.length || 0 > (d = goog.array.indexOf(a, c)) ? a.push(b) : goog.array.insertAt(a, b, d);
-  };
-
-  goog.array.remove = function (a, b) {
-    b = goog.array.indexOf(a, b);
-    var c;
-    (c = 0 <= b) && goog.array.removeAt(a, b);
-    return c;
-  };
-
-  goog.array.removeLast = function (a, b) {
-    b = goog.array.lastIndexOf(a, b);
-    return 0 <= b ? (goog.array.removeAt(a, b), !0) : !1;
-  };
-
-  goog.array.removeAt = function (a, b) {
-    goog.asserts.assert(null != a.length);
-    return 1 == Array.prototype.splice.call(a, b, 1).length;
-  };
-
-  goog.array.removeIf = function (a, b, c) {
-    b = goog.array.findIndex(a, b, c);
-    return 0 <= b ? (goog.array.removeAt(a, b), !0) : !1;
-  };
-
-  goog.array.removeAllIf = function (a, b, c) {
-    var d = 0;
-    goog.array.forEachRight(a, function (e, f) {
-      b.call(c, e, f, a) && goog.array.removeAt(a, f) && d++;
-    });
-    return d;
-  };
-
-  goog.array.concat = function (a) {
-    return Array.prototype.concat.apply([], arguments);
-  };
-
-  goog.array.join = function (a) {
-    return Array.prototype.concat.apply([], arguments);
-  };
-
-  goog.array.toArray = function (a) {
-    var b = a.length;
-
-    if (0 < b) {
-      for (var c = Array(b), d = 0; d < b; d++) {
-        c[d] = a[d];
-      }
-
-      return c;
-    }
-
-    return [];
-  };
-
-  goog.array.clone = goog.array.toArray;
-
-  goog.array.extend = function (a, b) {
-    for (var c = 1; c < arguments.length; c++) {
-      var d = arguments[c];
-
-      if (goog.isArrayLike(d)) {
-        var e = a.length || 0,
-            f = d.length || 0;
-        a.length = e + f;
-
-        for (var g = 0; g < f; g++) {
-          a[e + g] = d[g];
+    goog.exportSymbol = function (a, b, c) {
+      goog.exportPath_(a, b, c);
+    };
+
+    goog.exportProperty = function (a, b, c) {
+      a[b] = c;
+    };
+
+    goog.inherits = function (a, b) {
+      function c() {}
+
+      c.prototype = b.prototype;
+      a.superClass_ = b.prototype;
+      a.prototype = new c();
+      a.prototype.constructor = a;
+
+      a.base = function (a, c, f) {
+        for (var d = Array(arguments.length - 2), e = 2; e < arguments.length; e++) {
+          d[e - 2] = arguments[e];
         }
-      } else a.push(d);
-    }
-  };
 
-  goog.array.splice = function (a, b, c, d) {
-    goog.asserts.assert(null != a.length);
-    return Array.prototype.splice.apply(a, goog.array.slice(arguments, 1));
-  };
-
-  goog.array.slice = function (a, b, c) {
-    goog.asserts.assert(null != a.length);
-    return 2 >= arguments.length ? Array.prototype.slice.call(a, b) : Array.prototype.slice.call(a, b, c);
-  };
-
-  goog.array.removeDuplicates = function (a, b, c) {
-    b = b || a;
-
-    var d = function d(a) {
-      return goog.isObject(a) ? "o" + goog.getUid(a) : _typeof(a).charAt(0) + a;
-    };
-
-    c = c || d;
-    d = {};
-
-    for (var e = 0, f = 0; f < a.length;) {
-      var g = a[f++],
-          h = c(g);
-      Object.prototype.hasOwnProperty.call(d, h) || (d[h] = !0, b[e++] = g);
-    }
-
-    b.length = e;
-  };
-
-  goog.array.binarySearch = function (a, b, c) {
-    return goog.array.binarySearch_(a, c || goog.array.defaultCompare, !1, b);
-  };
-
-  goog.array.binarySelect = function (a, b, c) {
-    return goog.array.binarySearch_(a, b, !0, void 0, c);
-  };
-
-  goog.array.binarySearch_ = function (a, b, c, d, e) {
-    for (var f = 0, g = a.length, h; f < g;) {
-      var k = f + g >> 1;
-      var l = c ? b.call(e, a[k], k, a) : b(d, a[k]);
-      0 < l ? f = k + 1 : (g = k, h = !l);
-    }
-
-    return h ? f : ~f;
-  };
-
-  goog.array.sort = function (a, b) {
-    a.sort(b || goog.array.defaultCompare);
-  };
-
-  goog.array.stableSort = function (a, b) {
-    for (var c = Array(a.length), d = 0; d < a.length; d++) {
-      c[d] = {
-        index: d,
-        value: a[d]
+        return b.prototype[c].apply(a, d);
       };
-    }
-
-    var e = b || goog.array.defaultCompare;
-    goog.array.sort(c, function (a, b) {
-      return e(a.value, b.value) || a.index - b.index;
-    });
-
-    for (d = 0; d < a.length; d++) {
-      a[d] = c[d].value;
-    }
-  };
-
-  goog.array.sortByKey = function (a, b, c) {
-    var d = c || goog.array.defaultCompare;
-    goog.array.sort(a, function (a, c) {
-      return d(b(a), b(c));
-    });
-  };
-
-  goog.array.sortObjectsByKey = function (a, b, c) {
-    goog.array.sortByKey(a, function (a) {
-      return a[b];
-    }, c);
-  };
-
-  goog.array.isSorted = function (a, b, c) {
-    b = b || goog.array.defaultCompare;
-
-    for (var d = 1; d < a.length; d++) {
-      var e = b(a[d - 1], a[d]);
-      if (0 < e || 0 == e && c) return !1;
-    }
-
-    return !0;
-  };
-
-  goog.array.equals = function (a, b, c) {
-    if (!goog.isArrayLike(a) || !goog.isArrayLike(b) || a.length != b.length) return !1;
-    var d = a.length;
-    c = c || goog.array.defaultCompareEquality;
-
-    for (var e = 0; e < d; e++) {
-      if (!c(a[e], b[e])) return !1;
-    }
-
-    return !0;
-  };
-
-  goog.array.compare3 = function (a, b, c) {
-    c = c || goog.array.defaultCompare;
-
-    for (var d = Math.min(a.length, b.length), e = 0; e < d; e++) {
-      var f = c(a[e], b[e]);
-      if (0 != f) return f;
-    }
-
-    return goog.array.defaultCompare(a.length, b.length);
-  };
-
-  goog.array.defaultCompare = function (a, b) {
-    return a > b ? 1 : a < b ? -1 : 0;
-  };
-
-  goog.array.inverseDefaultCompare = function (a, b) {
-    return -goog.array.defaultCompare(a, b);
-  };
-
-  goog.array.defaultCompareEquality = function (a, b) {
-    return a === b;
-  };
-
-  goog.array.binaryInsert = function (a, b, c) {
-    c = goog.array.binarySearch(a, b, c);
-    return 0 > c ? (goog.array.insertAt(a, b, -(c + 1)), !0) : !1;
-  };
-
-  goog.array.binaryRemove = function (a, b, c) {
-    b = goog.array.binarySearch(a, b, c);
-    return 0 <= b ? goog.array.removeAt(a, b) : !1;
-  };
-
-  goog.array.bucket = function (a, b, c) {
-    for (var d = {}, e = 0; e < a.length; e++) {
-      var f = a[e],
-          g = b.call(c, f, e, a);
-      goog.isDef(g) && (d[g] || (d[g] = [])).push(f);
-    }
-
-    return d;
-  };
-
-  goog.array.toObject = function (a, b, c) {
-    var d = {};
-    goog.array.forEach(a, function (e, f) {
-      d[b.call(c, e, f, a)] = e;
-    });
-    return d;
-  };
-
-  goog.array.range = function (a, b, c) {
-    var d = [],
-        e = 0,
-        f = a;
-    c = c || 1;
-    void 0 !== b && (e = a, f = b);
-    if (0 > c * (f - e)) return [];
-    if (0 < c) for (a = e; a < f; a += c) {
-      d.push(a);
-    } else for (a = e; a > f; a += c) {
-      d.push(a);
-    }
-    return d;
-  };
-
-  goog.array.repeat = function (a, b) {
-    for (var c = [], d = 0; d < b; d++) {
-      c[d] = a;
-    }
-
-    return c;
-  };
-
-  goog.array.flatten = function (a) {
-    for (var b = [], c = 0; c < arguments.length; c++) {
-      var d = arguments[c];
-      if (goog.isArray(d)) for (var e = 0; e < d.length; e += 8192) {
-        var f = goog.array.slice(d, e, e + 8192);
-        f = goog.array.flatten.apply(null, f);
-
-        for (var g = 0; g < f.length; g++) {
-          b.push(f[g]);
-        }
-      } else b.push(d);
-    }
-
-    return b;
-  };
-
-  goog.array.rotate = function (a, b) {
-    goog.asserts.assert(null != a.length);
-    a.length && (b %= a.length, 0 < b ? Array.prototype.unshift.apply(a, a.splice(-b, b)) : 0 > b && Array.prototype.push.apply(a, a.splice(0, -b)));
-    return a;
-  };
-
-  goog.array.moveItem = function (a, b, c) {
-    goog.asserts.assert(0 <= b && b < a.length);
-    goog.asserts.assert(0 <= c && c < a.length);
-    b = Array.prototype.splice.call(a, b, 1);
-    Array.prototype.splice.call(a, c, 0, b[0]);
-  };
-
-  goog.array.zip = function (a) {
-    if (!arguments.length) return [];
-
-    for (var b = [], c = arguments[0].length, d = 1; d < arguments.length; d++) {
-      arguments[d].length < c && (c = arguments[d].length);
-    }
-
-    for (d = 0; d < c; d++) {
-      for (var e = [], f = 0; f < arguments.length; f++) {
-        e.push(arguments[f][d]);
-      }
-
-      b.push(e);
-    }
-
-    return b;
-  };
-
-  goog.array.shuffle = function (a, b) {
-    b = b || Math.random;
-
-    for (var c = a.length - 1; 0 < c; c--) {
-      var d = Math.floor(b() * (c + 1)),
-          e = a[c];
-      a[c] = a[d];
-      a[d] = e;
-    }
-  };
-
-  goog.array.copyByIndex = function (a, b) {
-    var c = [];
-    goog.array.forEach(b, function (b) {
-      c.push(a[b]);
-    });
-    return c;
-  };
-
-  goog.array.concatMap = function (a, b, c) {
-    return goog.array.concat.apply([], goog.array.map(a, b, c));
-  };
-
-  goog.crypt = {};
-
-  goog.crypt.stringToByteArray = function (a) {
-    for (var b = [], c = 0, d = 0; d < a.length; d++) {
-      var e = a.charCodeAt(d);
-      255 < e && (b[c++] = e & 255, e >>= 8);
-      b[c++] = e;
-    }
-
-    return b;
-  };
-
-  goog.crypt.byteArrayToString = function (a) {
-    if (8192 >= a.length) return String.fromCharCode.apply(null, a);
-
-    for (var b = "", c = 0; c < a.length; c += 8192) {
-      var d = goog.array.slice(a, c, c + 8192);
-      b += String.fromCharCode.apply(null, d);
-    }
-
-    return b;
-  };
-
-  goog.crypt.byteArrayToHex = function (a, b) {
-    return goog.array.map(a, function (a) {
-      a = a.toString(16);
-      return 1 < a.length ? a : "0" + a;
-    }).join(b || "");
-  };
-
-  goog.crypt.hexToByteArray = function (a) {
-    goog.asserts.assert(0 == a.length % 2, "Key string length must be multiple of 2");
-
-    for (var b = [], c = 0; c < a.length; c += 2) {
-      b.push(parseInt(a.substring(c, c + 2), 16));
-    }
-
-    return b;
-  };
-
-  goog.crypt.stringToUtf8ByteArray = function (a) {
-    for (var b = [], c = 0, d = 0; d < a.length; d++) {
-      var e = a.charCodeAt(d);
-      128 > e ? b[c++] = e : (2048 > e ? b[c++] = e >> 6 | 192 : (55296 == (e & 64512) && d + 1 < a.length && 56320 == (a.charCodeAt(d + 1) & 64512) ? (e = 65536 + ((e & 1023) << 10) + (a.charCodeAt(++d) & 1023), b[c++] = e >> 18 | 240, b[c++] = e >> 12 & 63 | 128) : b[c++] = e >> 12 | 224, b[c++] = e >> 6 & 63 | 128), b[c++] = e & 63 | 128);
-    }
-
-    return b;
-  };
-
-  goog.crypt.utf8ByteArrayToString = function (a) {
-    for (var b = [], c = 0, d = 0; c < a.length;) {
-      var e = a[c++];
-      if (128 > e) b[d++] = String.fromCharCode(e);else if (191 < e && 224 > e) {
-        var f = a[c++];
-        b[d++] = String.fromCharCode((e & 31) << 6 | f & 63);
-      } else if (239 < e && 365 > e) {
-        f = a[c++];
-        var g = a[c++],
-            h = a[c++];
-        e = ((e & 7) << 18 | (f & 63) << 12 | (g & 63) << 6 | h & 63) - 65536;
-        b[d++] = String.fromCharCode(55296 + (e >> 10));
-        b[d++] = String.fromCharCode(56320 + (e & 1023));
-      } else f = a[c++], g = a[c++], b[d++] = String.fromCharCode((e & 15) << 12 | (f & 63) << 6 | g & 63);
-    }
-
-    return b.join("");
-  };
-
-  goog.crypt.xorByteArray = function (a, b) {
-    goog.asserts.assert(a.length == b.length, "XOR array lengths must match");
-
-    for (var c = [], d = 0; d < a.length; d++) {
-      c.push(a[d] ^ b[d]);
-    }
-
-    return c;
-  };
-
-  goog.string = {};
-  goog.string.internal = {};
-
-  goog.string.internal.startsWith = function (a, b) {
-    return 0 == a.lastIndexOf(b, 0);
-  };
-
-  goog.string.internal.endsWith = function (a, b) {
-    var c = a.length - b.length;
-    return 0 <= c && a.indexOf(b, c) == c;
-  };
-
-  goog.string.internal.caseInsensitiveStartsWith = function (a, b) {
-    return 0 == goog.string.internal.caseInsensitiveCompare(b, a.substr(0, b.length));
-  };
-
-  goog.string.internal.caseInsensitiveEndsWith = function (a, b) {
-    return 0 == goog.string.internal.caseInsensitiveCompare(b, a.substr(a.length - b.length, b.length));
-  };
-
-  goog.string.internal.caseInsensitiveEquals = function (a, b) {
-    return a.toLowerCase() == b.toLowerCase();
-  };
-
-  goog.string.internal.isEmptyOrWhitespace = function (a) {
-    return /^[\s\xa0]*$/.test(a);
-  };
-
-  goog.string.internal.trim = goog.TRUSTED_SITE && String.prototype.trim ? function (a) {
-    return a.trim();
-  } : function (a) {
-    return /^[\s\xa0]*([\s\S]*?)[\s\xa0]*$/.exec(a)[1];
-  };
-
-  goog.string.internal.caseInsensitiveCompare = function (a, b) {
-    a = String(a).toLowerCase();
-    b = String(b).toLowerCase();
-    return a < b ? -1 : a == b ? 0 : 1;
-  };
-
-  goog.string.internal.newLineToBr = function (a, b) {
-    return a.replace(/(\r\n|\r|\n)/g, b ? "<br />" : "<br>");
-  };
-
-  goog.string.internal.htmlEscape = function (a, b) {
-    if (b) a = a.replace(goog.string.internal.AMP_RE_, "&amp;").replace(goog.string.internal.LT_RE_, "&lt;").replace(goog.string.internal.GT_RE_, "&gt;").replace(goog.string.internal.QUOT_RE_, "&quot;").replace(goog.string.internal.SINGLE_QUOTE_RE_, "&#39;").replace(goog.string.internal.NULL_RE_, "&#0;");else {
-      if (!goog.string.internal.ALL_RE_.test(a)) return a;
-      -1 != a.indexOf("&") && (a = a.replace(goog.string.internal.AMP_RE_, "&amp;"));
-      -1 != a.indexOf("<") && (a = a.replace(goog.string.internal.LT_RE_, "&lt;"));
-      -1 != a.indexOf(">") && (a = a.replace(goog.string.internal.GT_RE_, "&gt;"));
-      -1 != a.indexOf('"') && (a = a.replace(goog.string.internal.QUOT_RE_, "&quot;"));
-      -1 != a.indexOf("'") && (a = a.replace(goog.string.internal.SINGLE_QUOTE_RE_, "&#39;"));
-      -1 != a.indexOf("\x00") && (a = a.replace(goog.string.internal.NULL_RE_, "&#0;"));
-    }
-    return a;
-  };
-
-  goog.string.internal.AMP_RE_ = /&/g;
-  goog.string.internal.LT_RE_ = /</g;
-  goog.string.internal.GT_RE_ = />/g;
-  goog.string.internal.QUOT_RE_ = /"/g;
-  goog.string.internal.SINGLE_QUOTE_RE_ = /'/g;
-  goog.string.internal.NULL_RE_ = /\x00/g;
-  goog.string.internal.ALL_RE_ = /[\x00&<>"']/;
-
-  goog.string.internal.whitespaceEscape = function (a, b) {
-    return goog.string.internal.newLineToBr(a.replace(/  /g, " &#160;"), b);
-  };
-
-  goog.string.internal.contains = function (a, b) {
-    return -1 != a.indexOf(b);
-  };
-
-  goog.string.internal.caseInsensitiveContains = function (a, b) {
-    return goog.string.internal.contains(a.toLowerCase(), b.toLowerCase());
-  };
-
-  goog.string.internal.compareVersions = function (a, b) {
-    var c = 0;
-    a = goog.string.internal.trim(String(a)).split(".");
-    b = goog.string.internal.trim(String(b)).split(".");
-
-    for (var d = Math.max(a.length, b.length), e = 0; 0 == c && e < d; e++) {
-      var f = a[e] || "",
-          g = b[e] || "";
-
-      do {
-        f = /(\d*)(\D*)(.*)/.exec(f) || ["", "", "", ""];
-        g = /(\d*)(\D*)(.*)/.exec(g) || ["", "", "", ""];
-        if (0 == f[0].length && 0 == g[0].length) break;
-        c = 0 == f[1].length ? 0 : parseInt(f[1], 10);
-        var h = 0 == g[1].length ? 0 : parseInt(g[1], 10);
-        c = goog.string.internal.compareElements_(c, h) || goog.string.internal.compareElements_(0 == f[2].length, 0 == g[2].length) || goog.string.internal.compareElements_(f[2], g[2]);
-        f = f[3];
-        g = g[3];
-      } while (0 == c);
-    }
-
-    return c;
-  };
-
-  goog.string.internal.compareElements_ = function (a, b) {
-    return a < b ? -1 : a > b ? 1 : 0;
-  };
-
-  goog.string.DETECT_DOUBLE_ESCAPING = !1;
-  goog.string.FORCE_NON_DOM_HTML_UNESCAPING = !1;
-  goog.string.Unicode = {
-    NBSP: "\xA0"
-  };
-  goog.string.startsWith = goog.string.internal.startsWith;
-  goog.string.endsWith = goog.string.internal.endsWith;
-  goog.string.caseInsensitiveStartsWith = goog.string.internal.caseInsensitiveStartsWith;
-  goog.string.caseInsensitiveEndsWith = goog.string.internal.caseInsensitiveEndsWith;
-  goog.string.caseInsensitiveEquals = goog.string.internal.caseInsensitiveEquals;
-
-  goog.string.subs = function (a, b) {
-    for (var c = a.split("%s"), d = "", e = Array.prototype.slice.call(arguments, 1); e.length && 1 < c.length;) {
-      d += c.shift() + e.shift();
-    }
-
-    return d + c.join("%s");
-  };
-
-  goog.string.collapseWhitespace = function (a) {
-    return a.replace(/[\s\xa0]+/g, " ").replace(/^\s+|\s+$/g, "");
-  };
-
-  goog.string.isEmptyOrWhitespace = goog.string.internal.isEmptyOrWhitespace;
-
-  goog.string.isEmptyString = function (a) {
-    return 0 == a.length;
-  };
-
-  goog.string.isEmpty = goog.string.isEmptyOrWhitespace;
-
-  goog.string.isEmptyOrWhitespaceSafe = function (a) {
-    return goog.string.isEmptyOrWhitespace(goog.string.makeSafe(a));
-  };
-
-  goog.string.isEmptySafe = goog.string.isEmptyOrWhitespaceSafe;
-
-  goog.string.isBreakingWhitespace = function (a) {
-    return !/[^\t\n\r ]/.test(a);
-  };
-
-  goog.string.isAlpha = function (a) {
-    return !/[^a-zA-Z]/.test(a);
-  };
-
-  goog.string.isNumeric = function (a) {
-    return !/[^0-9]/.test(a);
-  };
-
-  goog.string.isAlphaNumeric = function (a) {
-    return !/[^a-zA-Z0-9]/.test(a);
-  };
-
-  goog.string.isSpace = function (a) {
-    return " " == a;
-  };
-
-  goog.string.isUnicodeChar = function (a) {
-    return 1 == a.length && " " <= a && "~" >= a || "\x80" <= a && "\uFFFD" >= a;
-  };
-
-  goog.string.stripNewlines = function (a) {
-    return a.replace(/(\r\n|\r|\n)+/g, " ");
-  };
-
-  goog.string.canonicalizeNewlines = function (a) {
-    return a.replace(/(\r\n|\r|\n)/g, "\n");
-  };
-
-  goog.string.normalizeWhitespace = function (a) {
-    return a.replace(/\xa0|\s/g, " ");
-  };
-
-  goog.string.normalizeSpaces = function (a) {
-    return a.replace(/\xa0|[ \t]+/g, " ");
-  };
-
-  goog.string.collapseBreakingSpaces = function (a) {
-    return a.replace(/[\t\r\n ]+/g, " ").replace(/^[\t\r\n ]+|[\t\r\n ]+$/g, "");
-  };
-
-  goog.string.trim = goog.string.internal.trim;
-
-  goog.string.trimLeft = function (a) {
-    return a.replace(/^[\s\xa0]+/, "");
-  };
-
-  goog.string.trimRight = function (a) {
-    return a.replace(/[\s\xa0]+$/, "");
-  };
-
-  goog.string.caseInsensitiveCompare = goog.string.internal.caseInsensitiveCompare;
-
-  goog.string.numberAwareCompare_ = function (a, b, c) {
-    if (a == b) return 0;
-    if (!a) return -1;
-    if (!b) return 1;
-
-    for (var d = a.toLowerCase().match(c), e = b.toLowerCase().match(c), f = Math.min(d.length, e.length), g = 0; g < f; g++) {
-      c = d[g];
-      var h = e[g];
-      if (c != h) return a = parseInt(c, 10), !isNaN(a) && (b = parseInt(h, 10), !isNaN(b) && a - b) ? a - b : c < h ? -1 : 1;
-    }
-
-    return d.length != e.length ? d.length - e.length : a < b ? -1 : 1;
-  };
-
-  goog.string.intAwareCompare = function (a, b) {
-    return goog.string.numberAwareCompare_(a, b, /\d+|\D+/g);
-  };
-
-  goog.string.floatAwareCompare = function (a, b) {
-    return goog.string.numberAwareCompare_(a, b, /\d+|\.\d+|\D+/g);
-  };
-
-  goog.string.numerateCompare = goog.string.floatAwareCompare;
-
-  goog.string.urlEncode = function (a) {
-    return encodeURIComponent(String(a));
-  };
-
-  goog.string.urlDecode = function (a) {
-    return decodeURIComponent(a.replace(/\+/g, " "));
-  };
-
-  goog.string.newLineToBr = goog.string.internal.newLineToBr;
-
-  goog.string.htmlEscape = function (a, b) {
-    a = goog.string.internal.htmlEscape(a, b);
-    goog.string.DETECT_DOUBLE_ESCAPING && (a = a.replace(goog.string.E_RE_, "&#101;"));
-    return a;
-  };
-
-  goog.string.E_RE_ = /e/g;
-
-  goog.string.unescapeEntities = function (a) {
-    return goog.string.contains(a, "&") ? !goog.string.FORCE_NON_DOM_HTML_UNESCAPING && "document" in goog.global ? goog.string.unescapeEntitiesUsingDom_(a) : goog.string.unescapePureXmlEntities_(a) : a;
-  };
-
-  goog.string.unescapeEntitiesWithDocument = function (a, b) {
-    return goog.string.contains(a, "&") ? goog.string.unescapeEntitiesUsingDom_(a, b) : a;
-  };
-
-  goog.string.unescapeEntitiesUsingDom_ = function (a, b) {
-    var c = {
-      "&amp;": "&",
-      "&lt;": "<",
-      "&gt;": ">",
-      "&quot;": '"'
     };
-    var d = b ? b.createElement("div") : goog.global.document.createElement("div");
-    return a.replace(goog.string.HTML_ENTITY_PATTERN_, function (a, b) {
-      var e = c[a];
-      if (e) return e;
-      "#" == b.charAt(0) && (b = Number("0" + b.substr(1)), isNaN(b) || (e = String.fromCharCode(b)));
-      e || (d.innerHTML = a + " ", e = d.firstChild.nodeValue.slice(0, -1));
-      return c[a] = e;
-    });
-  };
 
-  goog.string.unescapePureXmlEntities_ = function (a) {
-    return a.replace(/&([^;]+);/g, function (a, c) {
-      switch (c) {
-        case "amp":
-          return "&";
+    goog.base = function (a, b, c) {
+      var d = arguments.callee.caller;
+      if (goog.STRICT_MODE_COMPATIBLE || goog.DEBUG && !d) throw Error("arguments.caller not defined.  goog.base() cannot be used with strict mode code. See http://www.ecma-international.org/ecma-262/5.1/#sec-C");
 
-        case "lt":
-          return "<";
-
-        case "gt":
-          return ">";
-
-        case "quot":
-          return '"';
-
-        default:
-          return "#" != c.charAt(0) || (c = Number("0" + c.substr(1)), isNaN(c)) ? a : String.fromCharCode(c);
-      }
-    });
-  };
-
-  goog.string.HTML_ENTITY_PATTERN_ = /&([^;\s<&]+);?/g;
-
-  goog.string.whitespaceEscape = function (a, b) {
-    return goog.string.newLineToBr(a.replace(/  /g, " &#160;"), b);
-  };
-
-  goog.string.preserveSpaces = function (a) {
-    return a.replace(/(^|[\n ]) /g, "$1" + goog.string.Unicode.NBSP);
-  };
-
-  goog.string.stripQuotes = function (a, b) {
-    for (var c = b.length, d = 0; d < c; d++) {
-      var e = 1 == c ? b : b.charAt(d);
-      if (a.charAt(0) == e && a.charAt(a.length - 1) == e) return a.substring(1, a.length - 1);
-    }
-
-    return a;
-  };
-
-  goog.string.truncate = function (a, b, c) {
-    c && (a = goog.string.unescapeEntities(a));
-    a.length > b && (a = a.substring(0, b - 3) + "...");
-    c && (a = goog.string.htmlEscape(a));
-    return a;
-  };
-
-  goog.string.truncateMiddle = function (a, b, c, d) {
-    c && (a = goog.string.unescapeEntities(a));
-
-    if (d && a.length > b) {
-      d > b && (d = b);
-      var e = a.length - d;
-      a = a.substring(0, b - d) + "..." + a.substring(e);
-    } else a.length > b && (d = Math.floor(b / 2), e = a.length - d, a = a.substring(0, d + b % 2) + "..." + a.substring(e));
-
-    c && (a = goog.string.htmlEscape(a));
-    return a;
-  };
-
-  goog.string.specialEscapeChars_ = {
-    "\x00": "\\0",
-    "\b": "\\b",
-    "\f": "\\f",
-    "\n": "\\n",
-    "\r": "\\r",
-    "\t": "\\t",
-    "\x0B": "\\x0B",
-    '"': '\\"',
-    "\\": "\\\\",
-    "<": "<"
-  };
-  goog.string.jsEscapeCache_ = {
-    "'": "\\'"
-  };
-
-  goog.string.quote = function (a) {
-    a = String(a);
-
-    for (var b = ['"'], c = 0; c < a.length; c++) {
-      var d = a.charAt(c),
-          e = d.charCodeAt(0);
-      b[c + 1] = goog.string.specialEscapeChars_[d] || (31 < e && 127 > e ? d : goog.string.escapeChar(d));
-    }
-
-    b.push('"');
-    return b.join("");
-  };
-
-  goog.string.escapeString = function (a) {
-    for (var b = [], c = 0; c < a.length; c++) {
-      b[c] = goog.string.escapeChar(a.charAt(c));
-    }
-
-    return b.join("");
-  };
-
-  goog.string.escapeChar = function (a) {
-    if (a in goog.string.jsEscapeCache_) return goog.string.jsEscapeCache_[a];
-    if (a in goog.string.specialEscapeChars_) return goog.string.jsEscapeCache_[a] = goog.string.specialEscapeChars_[a];
-    var b = a.charCodeAt(0);
-    if (31 < b && 127 > b) var c = a;else {
-      if (256 > b) {
-        if (c = "\\x", 16 > b || 256 < b) c += "0";
-      } else c = "\\u", 4096 > b && (c += "0");
-
-      c += b.toString(16).toUpperCase();
-    }
-    return goog.string.jsEscapeCache_[a] = c;
-  };
-
-  goog.string.contains = goog.string.internal.contains;
-  goog.string.caseInsensitiveContains = goog.string.internal.caseInsensitiveContains;
-
-  goog.string.countOf = function (a, b) {
-    return a && b ? a.split(b).length - 1 : 0;
-  };
-
-  goog.string.removeAt = function (a, b, c) {
-    var d = a;
-    0 <= b && b < a.length && 0 < c && (d = a.substr(0, b) + a.substr(b + c, a.length - b - c));
-    return d;
-  };
-
-  goog.string.remove = function (a, b) {
-    return a.replace(b, "");
-  };
-
-  goog.string.removeAll = function (a, b) {
-    b = new RegExp(goog.string.regExpEscape(b), "g");
-    return a.replace(b, "");
-  };
-
-  goog.string.replaceAll = function (a, b, c) {
-    b = new RegExp(goog.string.regExpEscape(b), "g");
-    return a.replace(b, c.replace(/\$/g, "$$$$"));
-  };
-
-  goog.string.regExpEscape = function (a) {
-    return String(a).replace(/([-()\[\]{}+?*.$\^|,:#<!\\])/g, "\\$1").replace(/\x08/g, "\\x08");
-  };
-
-  goog.string.repeat = String.prototype.repeat ? function (a, b) {
-    return a.repeat(b);
-  } : function (a, b) {
-    return Array(b + 1).join(a);
-  };
-
-  goog.string.padNumber = function (a, b, c) {
-    a = goog.isDef(c) ? a.toFixed(c) : String(a);
-    c = a.indexOf(".");
-    -1 == c && (c = a.length);
-    return goog.string.repeat("0", Math.max(0, b - c)) + a;
-  };
-
-  goog.string.makeSafe = function (a) {
-    return null == a ? "" : String(a);
-  };
-
-  goog.string.buildString = function (a) {
-    return Array.prototype.join.call(arguments, "");
-  };
-
-  goog.string.getRandomString = function () {
-    return Math.floor(2147483648 * Math.random()).toString(36) + Math.abs(Math.floor(2147483648 * Math.random()) ^ goog.now()).toString(36);
-  };
-
-  goog.string.compareVersions = goog.string.internal.compareVersions;
-
-  goog.string.hashCode = function (a) {
-    for (var b = 0, c = 0; c < a.length; ++c) {
-      b = 31 * b + a.charCodeAt(c) >>> 0;
-    }
-
-    return b;
-  };
-
-  goog.string.uniqueStringCounter_ = 2147483648 * Math.random() | 0;
-
-  goog.string.createUniqueString = function () {
-    return "goog_" + goog.string.uniqueStringCounter_++;
-  };
-
-  goog.string.toNumber = function (a) {
-    var b = Number(a);
-    return 0 == b && goog.string.isEmptyOrWhitespace(a) ? NaN : b;
-  };
-
-  goog.string.isLowerCamelCase = function (a) {
-    return /^[a-z]+([A-Z][a-z]*)*$/.test(a);
-  };
-
-  goog.string.isUpperCamelCase = function (a) {
-    return /^([A-Z][a-z]*)+$/.test(a);
-  };
-
-  goog.string.toCamelCase = function (a) {
-    return String(a).replace(/\-([a-z])/g, function (a, c) {
-      return c.toUpperCase();
-    });
-  };
-
-  goog.string.toSelectorCase = function (a) {
-    return String(a).replace(/([A-Z])/g, "-$1").toLowerCase();
-  };
-
-  goog.string.toTitleCase = function (a, b) {
-    b = goog.isString(b) ? goog.string.regExpEscape(b) : "\\s";
-    return a.replace(new RegExp("(^" + (b ? "|[" + b + "]+" : "") + ")([a-z])", "g"), function (a, b, e) {
-      return b + e.toUpperCase();
-    });
-  };
-
-  goog.string.capitalize = function (a) {
-    return String(a.charAt(0)).toUpperCase() + String(a.substr(1)).toLowerCase();
-  };
-
-  goog.string.parseInt = function (a) {
-    isFinite(a) && (a = String(a));
-    return goog.isString(a) ? /^\s*-?0x/i.test(a) ? parseInt(a, 16) : parseInt(a, 10) : NaN;
-  };
-
-  goog.string.splitLimit = function (a, b, c) {
-    a = a.split(b);
-
-    for (var d = []; 0 < c && a.length;) {
-      d.push(a.shift()), c--;
-    }
-
-    a.length && d.push(a.join(b));
-    return d;
-  };
-
-  goog.string.lastComponent = function (a, b) {
-    if (b) "string" == typeof b && (b = [b]);else return a;
-
-    for (var c = -1, d = 0; d < b.length; d++) {
-      if ("" != b[d]) {
-        var e = a.lastIndexOf(b[d]);
-        e > c && (c = e);
-      }
-    }
-
-    return -1 == c ? a : a.slice(c + 1);
-  };
-
-  goog.string.editDistance = function (a, b) {
-    var c = [],
-        d = [];
-    if (a == b) return 0;
-    if (!a.length || !b.length) return Math.max(a.length, b.length);
-
-    for (var e = 0; e < b.length + 1; e++) {
-      c[e] = e;
-    }
-
-    for (e = 0; e < a.length; e++) {
-      d[0] = e + 1;
-
-      for (var f = 0; f < b.length; f++) {
-        d[f + 1] = Math.min(d[f] + 1, c[f + 1] + 1, c[f] + Number(a[e] != b[f]));
-      }
-
-      for (f = 0; f < c.length; f++) {
-        c[f] = d[f];
-      }
-    }
-
-    return d[b.length];
-  };
-
-  goog.labs = {};
-  goog.labs.userAgent = {};
-  goog.labs.userAgent.util = {};
-
-  goog.labs.userAgent.util.getNativeUserAgentString_ = function () {
-    var a = goog.labs.userAgent.util.getNavigator_();
-    return a && (a = a.userAgent) ? a : "";
-  };
-
-  goog.labs.userAgent.util.getNavigator_ = function () {
-    return goog.global.navigator;
-  };
-
-  goog.labs.userAgent.util.userAgent_ = goog.labs.userAgent.util.getNativeUserAgentString_();
-
-  goog.labs.userAgent.util.setUserAgent = function (a) {
-    goog.labs.userAgent.util.userAgent_ = a || goog.labs.userAgent.util.getNativeUserAgentString_();
-  };
-
-  goog.labs.userAgent.util.getUserAgent = function () {
-    return goog.labs.userAgent.util.userAgent_;
-  };
-
-  goog.labs.userAgent.util.matchUserAgent = function (a) {
-    var b = goog.labs.userAgent.util.getUserAgent();
-    return goog.string.internal.contains(b, a);
-  };
-
-  goog.labs.userAgent.util.matchUserAgentIgnoreCase = function (a) {
-    var b = goog.labs.userAgent.util.getUserAgent();
-    return goog.string.internal.caseInsensitiveContains(b, a);
-  };
-
-  goog.labs.userAgent.util.extractVersionTuples = function (a) {
-    for (var b = /(\w[\w ]+)\/([^\s]+)\s*(?:\((.*?)\))?/g, c = [], d; d = b.exec(a);) {
-      c.push([d[1], d[2], d[3] || void 0]);
-    }
-
-    return c;
-  };
-
-  goog.labs.userAgent.platform = {};
-
-  goog.labs.userAgent.platform.isAndroid = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Android");
-  };
-
-  goog.labs.userAgent.platform.isIpod = function () {
-    return goog.labs.userAgent.util.matchUserAgent("iPod");
-  };
-
-  goog.labs.userAgent.platform.isIphone = function () {
-    return goog.labs.userAgent.util.matchUserAgent("iPhone") && !goog.labs.userAgent.util.matchUserAgent("iPod") && !goog.labs.userAgent.util.matchUserAgent("iPad");
-  };
-
-  goog.labs.userAgent.platform.isIpad = function () {
-    return goog.labs.userAgent.util.matchUserAgent("iPad");
-  };
-
-  goog.labs.userAgent.platform.isIos = function () {
-    return goog.labs.userAgent.platform.isIphone() || goog.labs.userAgent.platform.isIpad() || goog.labs.userAgent.platform.isIpod();
-  };
-
-  goog.labs.userAgent.platform.isMacintosh = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Macintosh");
-  };
-
-  goog.labs.userAgent.platform.isLinux = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Linux");
-  };
-
-  goog.labs.userAgent.platform.isWindows = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Windows");
-  };
-
-  goog.labs.userAgent.platform.isChromeOS = function () {
-    return goog.labs.userAgent.util.matchUserAgent("CrOS");
-  };
-
-  goog.labs.userAgent.platform.isChromecast = function () {
-    return goog.labs.userAgent.util.matchUserAgent("CrKey");
-  };
-
-  goog.labs.userAgent.platform.isKaiOS = function () {
-    return goog.labs.userAgent.util.matchUserAgentIgnoreCase("KaiOS");
-  };
-
-  goog.labs.userAgent.platform.isGo2Phone = function () {
-    return goog.labs.userAgent.util.matchUserAgentIgnoreCase("GAFP");
-  };
-
-  goog.labs.userAgent.platform.getVersion = function () {
-    var a = goog.labs.userAgent.util.getUserAgent(),
-        b = "";
-    goog.labs.userAgent.platform.isWindows() ? (b = /Windows (?:NT|Phone) ([0-9.]+)/, b = (a = b.exec(a)) ? a[1] : "0.0") : goog.labs.userAgent.platform.isIos() ? (b = /(?:iPhone|iPod|iPad|CPU)\s+OS\s+(\S+)/, b = (a = b.exec(a)) && a[1].replace(/_/g, ".")) : goog.labs.userAgent.platform.isMacintosh() ? (b = /Mac OS X ([0-9_.]+)/, b = (a = b.exec(a)) ? a[1].replace(/_/g, ".") : "10") : goog.labs.userAgent.platform.isAndroid() ? (b = /Android\s+([^\);]+)(\)|;)/, b = (a = b.exec(a)) && a[1]) : goog.labs.userAgent.platform.isChromeOS() && (b = /(?:CrOS\s+(?:i686|x86_64)\s+([0-9.]+))/, b = (a = b.exec(a)) && a[1]);
-    return b || "";
-  };
-
-  goog.labs.userAgent.platform.isVersionOrHigher = function (a) {
-    return 0 <= goog.string.compareVersions(goog.labs.userAgent.platform.getVersion(), a);
-  };
-
-  goog.object = {};
-
-  goog.object.is = function (a, b) {
-    return a === b ? 0 !== a || 1 / a === 1 / b : a !== a && b !== b;
-  };
-
-  goog.object.forEach = function (a, b, c) {
-    for (var d in a) {
-      b.call(c, a[d], d, a);
-    }
-  };
-
-  goog.object.filter = function (a, b, c) {
-    var d = {},
-        e;
-
-    for (e in a) {
-      b.call(c, a[e], e, a) && (d[e] = a[e]);
-    }
-
-    return d;
-  };
-
-  goog.object.map = function (a, b, c) {
-    var d = {},
-        e;
-
-    for (e in a) {
-      d[e] = b.call(c, a[e], e, a);
-    }
-
-    return d;
-  };
-
-  goog.object.some = function (a, b, c) {
-    for (var d in a) {
-      if (b.call(c, a[d], d, a)) return !0;
-    }
-
-    return !1;
-  };
-
-  goog.object.every = function (a, b, c) {
-    for (var d in a) {
-      if (!b.call(c, a[d], d, a)) return !1;
-    }
-
-    return !0;
-  };
-
-  goog.object.getCount = function (a) {
-    var b = 0,
-        c;
-
-    for (c in a) {
-      b++;
-    }
-
-    return b;
-  };
-
-  goog.object.getAnyKey = function (a) {
-    for (var b in a) {
-      return b;
-    }
-  };
-
-  goog.object.getAnyValue = function (a) {
-    for (var b in a) {
-      return a[b];
-    }
-  };
-
-  goog.object.contains = function (a, b) {
-    return goog.object.containsValue(a, b);
-  };
-
-  goog.object.getValues = function (a) {
-    var b = [],
-        c = 0,
-        d;
-
-    for (d in a) {
-      b[c++] = a[d];
-    }
-
-    return b;
-  };
-
-  goog.object.getKeys = function (a) {
-    var b = [],
-        c = 0,
-        d;
-
-    for (d in a) {
-      b[c++] = d;
-    }
-
-    return b;
-  };
-
-  goog.object.getValueByKeys = function (a, b) {
-    var c = goog.isArrayLike(b),
-        d = c ? b : arguments;
-
-    for (c = c ? 0 : 1; c < d.length; c++) {
-      if (null == a) return;
-      a = a[d[c]];
-    }
-
-    return a;
-  };
-
-  goog.object.containsKey = function (a, b) {
-    return null !== a && b in a;
-  };
-
-  goog.object.containsValue = function (a, b) {
-    for (var c in a) {
-      if (a[c] == b) return !0;
-    }
-
-    return !1;
-  };
-
-  goog.object.findKey = function (a, b, c) {
-    for (var d in a) {
-      if (b.call(c, a[d], d, a)) return d;
-    }
-  };
-
-  goog.object.findValue = function (a, b, c) {
-    return (b = goog.object.findKey(a, b, c)) && a[b];
-  };
-
-  goog.object.isEmpty = function (a) {
-    for (var b in a) {
-      return !1;
-    }
-
-    return !0;
-  };
-
-  goog.object.clear = function (a) {
-    for (var b in a) {
-      delete a[b];
-    }
-  };
-
-  goog.object.remove = function (a, b) {
-    var c;
-    (c = b in a) && delete a[b];
-    return c;
-  };
-
-  goog.object.add = function (a, b, c) {
-    if (null !== a && b in a) throw Error('The object already contains the key "' + b + '"');
-    goog.object.set(a, b, c);
-  };
-
-  goog.object.get = function (a, b, c) {
-    return null !== a && b in a ? a[b] : c;
-  };
-
-  goog.object.set = function (a, b, c) {
-    a[b] = c;
-  };
-
-  goog.object.setIfUndefined = function (a, b, c) {
-    return b in a ? a[b] : a[b] = c;
-  };
-
-  goog.object.setWithReturnValueIfNotSet = function (a, b, c) {
-    if (b in a) return a[b];
-    c = c();
-    return a[b] = c;
-  };
-
-  goog.object.equals = function (a, b) {
-    for (var c in a) {
-      if (!(c in b) || a[c] !== b[c]) return !1;
-    }
-
-    for (c in b) {
-      if (!(c in a)) return !1;
-    }
-
-    return !0;
-  };
-
-  goog.object.clone = function (a) {
-    var b = {},
-        c;
-
-    for (c in a) {
-      b[c] = a[c];
-    }
-
-    return b;
-  };
-
-  goog.object.unsafeClone = function (a) {
-    var b = goog.typeOf(a);
-
-    if ("object" == b || "array" == b) {
-      if (goog.isFunction(a.clone)) return a.clone();
-      b = "array" == b ? [] : {};
-
-      for (var c in a) {
-        b[c] = goog.object.unsafeClone(a[c]);
-      }
-
-      return b;
-    }
-
-    return a;
-  };
-
-  goog.object.transpose = function (a) {
-    var b = {},
-        c;
-
-    for (c in a) {
-      b[a[c]] = c;
-    }
-
-    return b;
-  };
-
-  goog.object.PROTOTYPE_FIELDS_ = "constructor hasOwnProperty isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf".split(" ");
-
-  goog.object.extend = function (a, b) {
-    for (var c, d, e = 1; e < arguments.length; e++) {
-      d = arguments[e];
-
-      for (c in d) {
-        a[c] = d[c];
-      }
-
-      for (var f = 0; f < goog.object.PROTOTYPE_FIELDS_.length; f++) {
-        c = goog.object.PROTOTYPE_FIELDS_[f], Object.prototype.hasOwnProperty.call(d, c) && (a[c] = d[c]);
-      }
-    }
-  };
-
-  goog.object.create = function (a) {
-    var b = arguments.length;
-    if (1 == b && goog.isArray(arguments[0])) return goog.object.create.apply(null, arguments[0]);
-    if (b % 2) throw Error("Uneven number of arguments");
-
-    for (var c = {}, d = 0; d < b; d += 2) {
-      c[arguments[d]] = arguments[d + 1];
-    }
-
-    return c;
-  };
-
-  goog.object.createSet = function (a) {
-    var b = arguments.length;
-    if (1 == b && goog.isArray(arguments[0])) return goog.object.createSet.apply(null, arguments[0]);
-
-    for (var c = {}, d = 0; d < b; d++) {
-      c[arguments[d]] = !0;
-    }
-
-    return c;
-  };
-
-  goog.object.createImmutableView = function (a) {
-    var b = a;
-    Object.isFrozen && !Object.isFrozen(a) && (b = Object.create(a), Object.freeze(b));
-    return b;
-  };
-
-  goog.object.isImmutableView = function (a) {
-    return !!Object.isFrozen && Object.isFrozen(a);
-  };
-
-  goog.object.getAllPropertyNames = function (a, b, c) {
-    if (!a) return [];
-    if (!Object.getOwnPropertyNames || !Object.getPrototypeOf) return goog.object.getKeys(a);
-
-    for (var d = {}; a && (a !== Object.prototype || b) && (a !== Function.prototype || c);) {
-      for (var e = Object.getOwnPropertyNames(a), f = 0; f < e.length; f++) {
-        d[e[f]] = !0;
-      }
-
-      a = Object.getPrototypeOf(a);
-    }
-
-    return goog.object.getKeys(d);
-  };
-
-  goog.labs.userAgent.browser = {};
-
-  goog.labs.userAgent.browser.matchOpera_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Opera");
-  };
-
-  goog.labs.userAgent.browser.matchIE_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Trident") || goog.labs.userAgent.util.matchUserAgent("MSIE");
-  };
-
-  goog.labs.userAgent.browser.matchEdge_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Edge");
-  };
-
-  goog.labs.userAgent.browser.matchFirefox_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Firefox") || goog.labs.userAgent.util.matchUserAgent("FxiOS");
-  };
-
-  goog.labs.userAgent.browser.matchSafari_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Safari") && !(goog.labs.userAgent.browser.matchChrome_() || goog.labs.userAgent.browser.matchCoast_() || goog.labs.userAgent.browser.matchOpera_() || goog.labs.userAgent.browser.matchEdge_() || goog.labs.userAgent.browser.matchFirefox_() || goog.labs.userAgent.browser.isSilk() || goog.labs.userAgent.util.matchUserAgent("Android"));
-  };
-
-  goog.labs.userAgent.browser.matchCoast_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Coast");
-  };
-
-  goog.labs.userAgent.browser.matchIosWebview_ = function () {
-    return (goog.labs.userAgent.util.matchUserAgent("iPad") || goog.labs.userAgent.util.matchUserAgent("iPhone")) && !goog.labs.userAgent.browser.matchSafari_() && !goog.labs.userAgent.browser.matchChrome_() && !goog.labs.userAgent.browser.matchCoast_() && !goog.labs.userAgent.browser.matchFirefox_() && goog.labs.userAgent.util.matchUserAgent("AppleWebKit");
-  };
-
-  goog.labs.userAgent.browser.matchChrome_ = function () {
-    return (goog.labs.userAgent.util.matchUserAgent("Chrome") || goog.labs.userAgent.util.matchUserAgent("CriOS")) && !goog.labs.userAgent.browser.matchEdge_();
-  };
-
-  goog.labs.userAgent.browser.matchAndroidBrowser_ = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Android") && !(goog.labs.userAgent.browser.isChrome() || goog.labs.userAgent.browser.isFirefox() || goog.labs.userAgent.browser.isOpera() || goog.labs.userAgent.browser.isSilk());
-  };
-
-  goog.labs.userAgent.browser.isOpera = goog.labs.userAgent.browser.matchOpera_;
-  goog.labs.userAgent.browser.isIE = goog.labs.userAgent.browser.matchIE_;
-  goog.labs.userAgent.browser.isEdge = goog.labs.userAgent.browser.matchEdge_;
-  goog.labs.userAgent.browser.isFirefox = goog.labs.userAgent.browser.matchFirefox_;
-  goog.labs.userAgent.browser.isSafari = goog.labs.userAgent.browser.matchSafari_;
-  goog.labs.userAgent.browser.isCoast = goog.labs.userAgent.browser.matchCoast_;
-  goog.labs.userAgent.browser.isIosWebview = goog.labs.userAgent.browser.matchIosWebview_;
-  goog.labs.userAgent.browser.isChrome = goog.labs.userAgent.browser.matchChrome_;
-  goog.labs.userAgent.browser.isAndroidBrowser = goog.labs.userAgent.browser.matchAndroidBrowser_;
-
-  goog.labs.userAgent.browser.isSilk = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Silk");
-  };
-
-  goog.labs.userAgent.browser.getVersion = function () {
-    function a(a) {
-      a = goog.array.find(a, d);
-      return c[a] || "";
-    }
-
-    var b = goog.labs.userAgent.util.getUserAgent();
-    if (goog.labs.userAgent.browser.isIE()) return goog.labs.userAgent.browser.getIEVersion_(b);
-    b = goog.labs.userAgent.util.extractVersionTuples(b);
-    var c = {};
-    goog.array.forEach(b, function (a) {
-      c[a[0]] = a[1];
-    });
-    var d = goog.partial(goog.object.containsKey, c);
-    return goog.labs.userAgent.browser.isOpera() ? a(["Version", "Opera"]) : goog.labs.userAgent.browser.isEdge() ? a(["Edge"]) : goog.labs.userAgent.browser.isChrome() ? a(["Chrome", "CriOS"]) : (b = b[2]) && b[1] || "";
-  };
-
-  goog.labs.userAgent.browser.isVersionOrHigher = function (a) {
-    return 0 <= goog.string.internal.compareVersions(goog.labs.userAgent.browser.getVersion(), a);
-  };
-
-  goog.labs.userAgent.browser.getIEVersion_ = function (a) {
-    var b = /rv: *([\d\.]*)/.exec(a);
-    if (b && b[1]) return b[1];
-    b = "";
-    var c = /MSIE +([\d\.]+)/.exec(a);
-    if (c && c[1]) if (a = /Trident\/(\d.\d)/.exec(a), "7.0" == c[1]) {
-      if (a && a[1]) switch (a[1]) {
-        case "4.0":
-          b = "8.0";
-          break;
-
-        case "5.0":
-          b = "9.0";
-          break;
-
-        case "6.0":
-          b = "10.0";
-          break;
-
-        case "7.0":
-          b = "11.0";
-      } else b = "7.0";
-    } else b = c[1];
-    return b;
-  };
-
-  goog.reflect = {};
-
-  goog.reflect.object = function (a, b) {
-    return b;
-  };
-
-  goog.reflect.objectProperty = function (a, b) {
-    return a;
-  };
-
-  goog.reflect.sinkValue = function (a) {
-    goog.reflect.sinkValue[" "](a);
-    return a;
-  };
-
-  goog.reflect.sinkValue[" "] = goog.nullFunction;
-
-  goog.reflect.canAccessProperty = function (a, b) {
-    try {
-      return goog.reflect.sinkValue(a[b]), !0;
-    } catch (c) {}
-
-    return !1;
-  };
-
-  goog.reflect.cache = function (a, b, c, d) {
-    d = d ? d(b) : b;
-    return Object.prototype.hasOwnProperty.call(a, d) ? a[d] : a[d] = c(b);
-  };
-
-  goog.labs.userAgent.engine = {};
-
-  goog.labs.userAgent.engine.isPresto = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Presto");
-  };
-
-  goog.labs.userAgent.engine.isTrident = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Trident") || goog.labs.userAgent.util.matchUserAgent("MSIE");
-  };
-
-  goog.labs.userAgent.engine.isEdge = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Edge");
-  };
-
-  goog.labs.userAgent.engine.isWebKit = function () {
-    return goog.labs.userAgent.util.matchUserAgentIgnoreCase("WebKit") && !goog.labs.userAgent.engine.isEdge();
-  };
-
-  goog.labs.userAgent.engine.isGecko = function () {
-    return goog.labs.userAgent.util.matchUserAgent("Gecko") && !goog.labs.userAgent.engine.isWebKit() && !goog.labs.userAgent.engine.isTrident() && !goog.labs.userAgent.engine.isEdge();
-  };
-
-  goog.labs.userAgent.engine.getVersion = function () {
-    var a = goog.labs.userAgent.util.getUserAgent();
-
-    if (a) {
-      a = goog.labs.userAgent.util.extractVersionTuples(a);
-      var b = goog.labs.userAgent.engine.getEngineTuple_(a);
-      if (b) return "Gecko" == b[0] ? goog.labs.userAgent.engine.getVersionForKey_(a, "Firefox") : b[1];
-      a = a[0];
-      var c;
-      if (a && (c = a[2]) && (c = /Trident\/([^\s;]+)/.exec(c))) return c[1];
-    }
-
-    return "";
-  };
-
-  goog.labs.userAgent.engine.getEngineTuple_ = function (a) {
-    if (!goog.labs.userAgent.engine.isEdge()) return a[1];
-
-    for (var b = 0; b < a.length; b++) {
-      var c = a[b];
-      if ("Edge" == c[0]) return c;
-    }
-  };
-
-  goog.labs.userAgent.engine.isVersionOrHigher = function (a) {
-    return 0 <= goog.string.compareVersions(goog.labs.userAgent.engine.getVersion(), a);
-  };
-
-  goog.labs.userAgent.engine.getVersionForKey_ = function (a, b) {
-    return (a = goog.array.find(a, function (a) {
-      return b == a[0];
-    })) && a[1] || "";
-  };
-
-  goog.userAgent = {};
-  goog.userAgent.ASSUME_IE = !1;
-  goog.userAgent.ASSUME_EDGE = !1;
-  goog.userAgent.ASSUME_GECKO = !1;
-  goog.userAgent.ASSUME_WEBKIT = !1;
-  goog.userAgent.ASSUME_MOBILE_WEBKIT = !1;
-  goog.userAgent.ASSUME_OPERA = !1;
-  goog.userAgent.ASSUME_ANY_VERSION = !1;
-  goog.userAgent.BROWSER_KNOWN_ = goog.userAgent.ASSUME_IE || goog.userAgent.ASSUME_EDGE || goog.userAgent.ASSUME_GECKO || goog.userAgent.ASSUME_MOBILE_WEBKIT || goog.userAgent.ASSUME_WEBKIT || goog.userAgent.ASSUME_OPERA;
-
-  goog.userAgent.getUserAgentString = function () {
-    return goog.labs.userAgent.util.getUserAgent();
-  };
-
-  goog.userAgent.getNavigatorTyped = function () {
-    return goog.global.navigator || null;
-  };
-
-  goog.userAgent.getNavigator = function () {
-    return goog.userAgent.getNavigatorTyped();
-  };
-
-  goog.userAgent.OPERA = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_OPERA : goog.labs.userAgent.browser.isOpera();
-  goog.userAgent.IE = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_IE : goog.labs.userAgent.browser.isIE();
-  goog.userAgent.EDGE = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_EDGE : goog.labs.userAgent.engine.isEdge();
-  goog.userAgent.EDGE_OR_IE = goog.userAgent.EDGE || goog.userAgent.IE;
-  goog.userAgent.GECKO = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_GECKO : goog.labs.userAgent.engine.isGecko();
-  goog.userAgent.WEBKIT = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_WEBKIT || goog.userAgent.ASSUME_MOBILE_WEBKIT : goog.labs.userAgent.engine.isWebKit();
-
-  goog.userAgent.isMobile_ = function () {
-    return goog.userAgent.WEBKIT && goog.labs.userAgent.util.matchUserAgent("Mobile");
-  };
-
-  goog.userAgent.MOBILE = goog.userAgent.ASSUME_MOBILE_WEBKIT || goog.userAgent.isMobile_();
-  goog.userAgent.SAFARI = goog.userAgent.WEBKIT;
-
-  goog.userAgent.determinePlatform_ = function () {
-    var a = goog.userAgent.getNavigatorTyped();
-    return a && a.platform || "";
-  };
-
-  goog.userAgent.PLATFORM = goog.userAgent.determinePlatform_();
-  goog.userAgent.ASSUME_MAC = !1;
-  goog.userAgent.ASSUME_WINDOWS = !1;
-  goog.userAgent.ASSUME_LINUX = !1;
-  goog.userAgent.ASSUME_X11 = !1;
-  goog.userAgent.ASSUME_ANDROID = !1;
-  goog.userAgent.ASSUME_IPHONE = !1;
-  goog.userAgent.ASSUME_IPAD = !1;
-  goog.userAgent.ASSUME_IPOD = !1;
-  goog.userAgent.ASSUME_KAIOS = !1;
-  goog.userAgent.ASSUME_GO2PHONE = !1;
-  goog.userAgent.PLATFORM_KNOWN_ = goog.userAgent.ASSUME_MAC || goog.userAgent.ASSUME_WINDOWS || goog.userAgent.ASSUME_LINUX || goog.userAgent.ASSUME_X11 || goog.userAgent.ASSUME_ANDROID || goog.userAgent.ASSUME_IPHONE || goog.userAgent.ASSUME_IPAD || goog.userAgent.ASSUME_IPOD;
-  goog.userAgent.MAC = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_MAC : goog.labs.userAgent.platform.isMacintosh();
-  goog.userAgent.WINDOWS = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_WINDOWS : goog.labs.userAgent.platform.isWindows();
-
-  goog.userAgent.isLegacyLinux_ = function () {
-    return goog.labs.userAgent.platform.isLinux() || goog.labs.userAgent.platform.isChromeOS();
-  };
-
-  goog.userAgent.LINUX = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_LINUX : goog.userAgent.isLegacyLinux_();
-
-  goog.userAgent.isX11_ = function () {
-    var a = goog.userAgent.getNavigatorTyped();
-    return !!a && goog.string.contains(a.appVersion || "", "X11");
-  };
-
-  goog.userAgent.X11 = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_X11 : goog.userAgent.isX11_();
-  goog.userAgent.ANDROID = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_ANDROID : goog.labs.userAgent.platform.isAndroid();
-  goog.userAgent.IPHONE = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPHONE : goog.labs.userAgent.platform.isIphone();
-  goog.userAgent.IPAD = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPAD : goog.labs.userAgent.platform.isIpad();
-  goog.userAgent.IPOD = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPOD : goog.labs.userAgent.platform.isIpod();
-  goog.userAgent.IOS = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPHONE || goog.userAgent.ASSUME_IPAD || goog.userAgent.ASSUME_IPOD : goog.labs.userAgent.platform.isIos();
-  goog.userAgent.KAIOS = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_KAIOS : goog.labs.userAgent.platform.isKaiOS();
-  goog.userAgent.GO2PHONE = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_GO2PHONE : goog.labs.userAgent.platform.isGo2Phone();
-
-  goog.userAgent.determineVersion_ = function () {
-    var a = "",
-        b = goog.userAgent.getVersionRegexResult_();
-    b && (a = b ? b[1] : "");
-    return goog.userAgent.IE && (b = goog.userAgent.getDocumentMode_(), null != b && b > parseFloat(a)) ? String(b) : a;
-  };
-
-  goog.userAgent.getVersionRegexResult_ = function () {
-    var a = goog.userAgent.getUserAgentString();
-    if (goog.userAgent.GECKO) return /rv:([^\);]+)(\)|;)/.exec(a);
-    if (goog.userAgent.EDGE) return /Edge\/([\d\.]+)/.exec(a);
-    if (goog.userAgent.IE) return /\b(?:MSIE|rv)[: ]([^\);]+)(\)|;)/.exec(a);
-    if (goog.userAgent.WEBKIT) return /WebKit\/(\S+)/.exec(a);
-    if (goog.userAgent.OPERA) return /(?:Version)[ \/]?(\S+)/.exec(a);
-  };
-
-  goog.userAgent.getDocumentMode_ = function () {
-    var a = goog.global.document;
-    return a ? a.documentMode : void 0;
-  };
-
-  goog.userAgent.VERSION = goog.userAgent.determineVersion_();
-
-  goog.userAgent.compare = function (a, b) {
-    return goog.string.compareVersions(a, b);
-  };
-
-  goog.userAgent.isVersionOrHigherCache_ = {};
-
-  goog.userAgent.isVersionOrHigher = function (a) {
-    return goog.userAgent.ASSUME_ANY_VERSION || goog.reflect.cache(goog.userAgent.isVersionOrHigherCache_, a, function () {
-      return 0 <= goog.string.compareVersions(goog.userAgent.VERSION, a);
-    });
-  };
-
-  goog.userAgent.isVersion = goog.userAgent.isVersionOrHigher;
-
-  goog.userAgent.isDocumentModeOrHigher = function (a) {
-    return Number(goog.userAgent.DOCUMENT_MODE) >= a;
-  };
-
-  goog.userAgent.isDocumentMode = goog.userAgent.isDocumentModeOrHigher;
-
-  goog.userAgent.DOCUMENT_MODE = function () {
-    var a = goog.global.document,
-        b = goog.userAgent.getDocumentMode_();
-    if (a && goog.userAgent.IE) return b || ("CSS1Compat" == a.compatMode ? parseInt(goog.userAgent.VERSION, 10) : 5);
-  }();
-
-  goog.userAgent.product = {};
-  goog.userAgent.product.ASSUME_FIREFOX = !1;
-  goog.userAgent.product.ASSUME_IPHONE = !1;
-  goog.userAgent.product.ASSUME_IPAD = !1;
-  goog.userAgent.product.ASSUME_ANDROID = !1;
-  goog.userAgent.product.ASSUME_CHROME = !1;
-  goog.userAgent.product.ASSUME_SAFARI = !1;
-  goog.userAgent.product.PRODUCT_KNOWN_ = goog.userAgent.ASSUME_IE || goog.userAgent.ASSUME_EDGE || goog.userAgent.ASSUME_OPERA || goog.userAgent.product.ASSUME_FIREFOX || goog.userAgent.product.ASSUME_IPHONE || goog.userAgent.product.ASSUME_IPAD || goog.userAgent.product.ASSUME_ANDROID || goog.userAgent.product.ASSUME_CHROME || goog.userAgent.product.ASSUME_SAFARI;
-  goog.userAgent.product.OPERA = goog.userAgent.OPERA;
-  goog.userAgent.product.IE = goog.userAgent.IE;
-  goog.userAgent.product.EDGE = goog.userAgent.EDGE;
-  goog.userAgent.product.FIREFOX = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_FIREFOX : goog.labs.userAgent.browser.isFirefox();
-
-  goog.userAgent.product.isIphoneOrIpod_ = function () {
-    return goog.labs.userAgent.platform.isIphone() || goog.labs.userAgent.platform.isIpod();
-  };
-
-  goog.userAgent.product.IPHONE = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_IPHONE : goog.userAgent.product.isIphoneOrIpod_();
-  goog.userAgent.product.IPAD = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_IPAD : goog.labs.userAgent.platform.isIpad();
-  goog.userAgent.product.ANDROID = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_ANDROID : goog.labs.userAgent.browser.isAndroidBrowser();
-  goog.userAgent.product.CHROME = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_CHROME : goog.labs.userAgent.browser.isChrome();
-
-  goog.userAgent.product.isSafariDesktop_ = function () {
-    return goog.labs.userAgent.browser.isSafari() && !goog.labs.userAgent.platform.isIos();
-  };
-
-  goog.userAgent.product.SAFARI = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_SAFARI : goog.userAgent.product.isSafariDesktop_();
-  goog.crypt.base64 = {};
-  goog.crypt.base64.byteToCharMap_ = null;
-  goog.crypt.base64.charToByteMap_ = null;
-  goog.crypt.base64.byteToCharMapWebSafe_ = null;
-  goog.crypt.base64.ENCODED_VALS_BASE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  goog.crypt.base64.ENCODED_VALS = goog.crypt.base64.ENCODED_VALS_BASE + "+/=";
-  goog.crypt.base64.ENCODED_VALS_WEBSAFE = goog.crypt.base64.ENCODED_VALS_BASE + "-_.";
-  goog.crypt.base64.ASSUME_NATIVE_SUPPORT_ = goog.userAgent.GECKO || goog.userAgent.WEBKIT && !goog.userAgent.product.SAFARI || goog.userAgent.OPERA;
-  goog.crypt.base64.HAS_NATIVE_ENCODE_ = goog.crypt.base64.ASSUME_NATIVE_SUPPORT_ || "function" == typeof goog.global.btoa;
-  goog.crypt.base64.HAS_NATIVE_DECODE_ = goog.crypt.base64.ASSUME_NATIVE_SUPPORT_ || !goog.userAgent.product.SAFARI && !goog.userAgent.IE && "function" == typeof goog.global.atob;
-
-  goog.crypt.base64.encodeByteArray = function (a, b) {
-    goog.asserts.assert(goog.isArrayLike(a), "encodeByteArray takes an array as a parameter");
-    goog.crypt.base64.init_();
-    b = b ? goog.crypt.base64.byteToCharMapWebSafe_ : goog.crypt.base64.byteToCharMap_;
-
-    for (var c = [], d = 0; d < a.length; d += 3) {
-      var e = a[d],
-          f = d + 1 < a.length,
-          g = f ? a[d + 1] : 0,
-          h = d + 2 < a.length,
-          k = h ? a[d + 2] : 0,
-          l = e >> 2;
-      e = (e & 3) << 4 | g >> 4;
-      g = (g & 15) << 2 | k >> 6;
-      k &= 63;
-      h || (k = 64, f || (g = 64));
-      c.push(b[l], b[e], b[g], b[k]);
-    }
-
-    return c.join("");
-  };
-
-  goog.crypt.base64.encodeString = function (a, b) {
-    return goog.crypt.base64.HAS_NATIVE_ENCODE_ && !b ? goog.global.btoa(a) : goog.crypt.base64.encodeByteArray(goog.crypt.stringToByteArray(a), b);
-  };
-
-  goog.crypt.base64.decodeString = function (a, b) {
-    if (goog.crypt.base64.HAS_NATIVE_DECODE_ && !b) return goog.global.atob(a);
-    var c = "";
-    goog.crypt.base64.decodeStringInternal_(a, function (a) {
-      c += String.fromCharCode(a);
-    });
-    return c;
-  };
-
-  goog.crypt.base64.decodeStringToByteArray = function (a, b) {
-    var c = [];
-    goog.crypt.base64.decodeStringInternal_(a, function (a) {
-      c.push(a);
-    });
-    return c;
-  };
-
-  goog.crypt.base64.decodeStringToUint8Array = function (a) {
-    goog.asserts.assert(!goog.userAgent.IE || goog.userAgent.isVersionOrHigher("10"), "Browser does not support typed arrays");
-    var b = a.length,
-        c = 0;
-    "=" === a[b - 2] ? c = 2 : "=" === a[b - 1] && (c = 1);
-    var d = new Uint8Array(Math.ceil(3 * b / 4) - c),
-        e = 0;
-    goog.crypt.base64.decodeStringInternal_(a, function (a) {
-      d[e++] = a;
-    });
-    return d.subarray(0, e);
-  };
-
-  goog.crypt.base64.decodeStringInternal_ = function (a, b) {
-    function c(b) {
-      for (; d < a.length;) {
-        var c = a.charAt(d++),
-            e = goog.crypt.base64.charToByteMap_[c];
-        if (null != e) return e;
-        if (!goog.string.isEmptyOrWhitespace(c)) throw Error("Unknown base64 encoding at char: " + c);
-      }
-
-      return b;
-    }
-
-    goog.crypt.base64.init_();
-
-    for (var d = 0;;) {
-      var e = c(-1),
-          f = c(0),
-          g = c(64),
-          h = c(64);
-      if (64 === h && -1 === e) break;
-      b(e << 2 | f >> 4);
-      64 != g && (b(f << 4 & 240 | g >> 2), 64 != h && b(g << 6 & 192 | h));
-    }
-  };
-
-  goog.crypt.base64.init_ = function () {
-    if (!goog.crypt.base64.byteToCharMap_) {
-      goog.crypt.base64.byteToCharMap_ = {};
-      goog.crypt.base64.charToByteMap_ = {};
-      goog.crypt.base64.byteToCharMapWebSafe_ = {};
-
-      for (var a = 0; a < goog.crypt.base64.ENCODED_VALS.length; a++) {
-        goog.crypt.base64.byteToCharMap_[a] = goog.crypt.base64.ENCODED_VALS.charAt(a), goog.crypt.base64.charToByteMap_[goog.crypt.base64.byteToCharMap_[a]] = a, goog.crypt.base64.byteToCharMapWebSafe_[a] = goog.crypt.base64.ENCODED_VALS_WEBSAFE.charAt(a), a >= goog.crypt.base64.ENCODED_VALS_BASE.length && (goog.crypt.base64.charToByteMap_[goog.crypt.base64.ENCODED_VALS_WEBSAFE.charAt(a)] = a);
-      }
-    }
-  };
-
-  jspb.utils = {};
-  jspb.utils.split64Low = 0;
-  jspb.utils.split64High = 0;
-
-  jspb.utils.splitUint64 = function (a) {
-    var b = a >>> 0;
-    a = Math.floor((a - b) / jspb.BinaryConstants.TWO_TO_32) >>> 0;
-    jspb.utils.split64Low = b;
-    jspb.utils.split64High = a;
-  };
-
-  jspb.utils.splitInt64 = function (a) {
-    var b = 0 > a;
-    a = Math.abs(a);
-    var c = a >>> 0;
-    a = Math.floor((a - c) / jspb.BinaryConstants.TWO_TO_32);
-    a >>>= 0;
-    b && (a = ~a >>> 0, c = (~c >>> 0) + 1, 4294967295 < c && (c = 0, a++, 4294967295 < a && (a = 0)));
-    jspb.utils.split64Low = c;
-    jspb.utils.split64High = a;
-  };
-
-  jspb.utils.splitZigzag64 = function (a) {
-    var b = 0 > a;
-    a = 2 * Math.abs(a);
-    jspb.utils.splitUint64(a);
-    a = jspb.utils.split64Low;
-    var c = jspb.utils.split64High;
-    b && (0 == a ? 0 == c ? c = a = 4294967295 : (c--, a = 4294967295) : a--);
-    jspb.utils.split64Low = a;
-    jspb.utils.split64High = c;
-  };
-
-  jspb.utils.splitFloat32 = function (a) {
-    var b = 0 > a ? 1 : 0;
-    a = b ? -a : a;
-    if (0 === a) 0 < 1 / a ? (jspb.utils.split64High = 0, jspb.utils.split64Low = 0) : (jspb.utils.split64High = 0, jspb.utils.split64Low = 2147483648);else if (isNaN(a)) jspb.utils.split64High = 0, jspb.utils.split64Low = 2147483647;else if (a > jspb.BinaryConstants.FLOAT32_MAX) jspb.utils.split64High = 0, jspb.utils.split64Low = (b << 31 | 2139095040) >>> 0;else if (a < jspb.BinaryConstants.FLOAT32_MIN) a = Math.round(a / Math.pow(2, -149)), jspb.utils.split64High = 0, jspb.utils.split64Low = (b << 31 | a) >>> 0;else {
-      var c = Math.floor(Math.log(a) / Math.LN2);
-      a *= Math.pow(2, -c);
-      a = Math.round(a * jspb.BinaryConstants.TWO_TO_23) & 8388607;
-      jspb.utils.split64High = 0;
-      jspb.utils.split64Low = (b << 31 | c + 127 << 23 | a) >>> 0;
-    }
-  };
-
-  jspb.utils.splitFloat64 = function (a) {
-    var b = 0 > a ? 1 : 0;
-    a = b ? -a : a;
-    if (0 === a) jspb.utils.split64High = 0 < 1 / a ? 0 : 2147483648, jspb.utils.split64Low = 0;else if (isNaN(a)) jspb.utils.split64High = 2147483647, jspb.utils.split64Low = 4294967295;else if (a > jspb.BinaryConstants.FLOAT64_MAX) jspb.utils.split64High = (b << 31 | 2146435072) >>> 0, jspb.utils.split64Low = 0;else if (a < jspb.BinaryConstants.FLOAT64_MIN) {
-      var c = a / Math.pow(2, -1074);
-      a = c / jspb.BinaryConstants.TWO_TO_32;
-      jspb.utils.split64High = (b << 31 | a) >>> 0;
-      jspb.utils.split64Low = c >>> 0;
-    } else {
-      var d = Math.floor(Math.log(a) / Math.LN2);
-      1024 == d && (d = 1023);
-      c = a * Math.pow(2, -d);
-      a = c * jspb.BinaryConstants.TWO_TO_20 & 1048575;
-      c = c * jspb.BinaryConstants.TWO_TO_52 >>> 0;
-      jspb.utils.split64High = (b << 31 | d + 1023 << 20 | a) >>> 0;
-      jspb.utils.split64Low = c;
-    }
-  };
-
-  jspb.utils.splitHash64 = function (a) {
-    var b = a.charCodeAt(0),
-        c = a.charCodeAt(1),
-        d = a.charCodeAt(2),
-        e = a.charCodeAt(3),
-        f = a.charCodeAt(4),
-        g = a.charCodeAt(5),
-        h = a.charCodeAt(6);
-    a = a.charCodeAt(7);
-    jspb.utils.split64Low = b + (c << 8) + (d << 16) + (e << 24) >>> 0;
-    jspb.utils.split64High = f + (g << 8) + (h << 16) + (a << 24) >>> 0;
-  };
-
-  jspb.utils.joinUint64 = function (a, b) {
-    return b * jspb.BinaryConstants.TWO_TO_32 + a;
-  };
-
-  jspb.utils.joinInt64 = function (a, b) {
-    var c = b & 2147483648;
-    c && (a = ~a + 1 >>> 0, b = ~b >>> 0, 0 == a && (b = b + 1 >>> 0));
-    a = jspb.utils.joinUint64(a, b);
-    return c ? -a : a;
-  };
-
-  jspb.utils.joinZigzag64 = function (a, b) {
-    var c = a & 1;
-    a = (a >>> 1 | b << 31) >>> 0;
-    b >>>= 1;
-    c && (a = a + 1 >>> 0, 0 == a && (b = b + 1 >>> 0));
-    a = jspb.utils.joinUint64(a, b);
-    return c ? -a : a;
-  };
-
-  jspb.utils.joinFloat32 = function (a, b) {
-    b = 2 * (a >> 31) + 1;
-    var c = a >>> 23 & 255;
-    a &= 8388607;
-    return 255 == c ? a ? NaN : Infinity * b : 0 == c ? b * Math.pow(2, -149) * a : b * Math.pow(2, c - 150) * (a + Math.pow(2, 23));
-  };
-
-  jspb.utils.joinFloat64 = function (a, b) {
-    var c = 2 * (b >> 31) + 1,
-        d = b >>> 20 & 2047;
-    a = jspb.BinaryConstants.TWO_TO_32 * (b & 1048575) + a;
-    return 2047 == d ? a ? NaN : Infinity * c : 0 == d ? c * Math.pow(2, -1074) * a : c * Math.pow(2, d - 1075) * (a + jspb.BinaryConstants.TWO_TO_52);
-  };
-
-  jspb.utils.joinHash64 = function (a, b) {
-    return String.fromCharCode(a >>> 0 & 255, a >>> 8 & 255, a >>> 16 & 255, a >>> 24 & 255, b >>> 0 & 255, b >>> 8 & 255, b >>> 16 & 255, b >>> 24 & 255);
-  };
-
-  jspb.utils.DIGITS = "0123456789abcdef".split("");
-
-  jspb.utils.joinUnsignedDecimalString = function (a, b) {
-    function c(a) {
-      for (var b = 1E7, c = 0; 7 > c; c++) {
-        b /= 10;
-        var d = a / b % 10 >>> 0;
-        if (0 != d || f) f = !0, g += e[d];
-      }
-    }
-
-    if (2097151 >= b) return "" + (jspb.BinaryConstants.TWO_TO_32 * b + a);
-    var d = (a >>> 24 | b << 8) >>> 0 & 16777215;
-    b = b >> 16 & 65535;
-    a = (a & 16777215) + 6777216 * d + 6710656 * b;
-    d += 8147497 * b;
-    b *= 2;
-    1E7 <= a && (d += Math.floor(a / 1E7), a %= 1E7);
-    1E7 <= d && (b += Math.floor(d / 1E7), d %= 1E7);
-    var e = jspb.utils.DIGITS,
-        f = !1,
-        g = "";
-    (b || f) && c(b);
-    (d || f) && c(d);
-    (a || f) && c(a);
-    return g;
-  };
-
-  jspb.utils.joinSignedDecimalString = function (a, b) {
-    var c = b & 2147483648;
-    c && (a = ~a + 1 >>> 0, b = ~b + (0 == a ? 1 : 0) >>> 0);
-    a = jspb.utils.joinUnsignedDecimalString(a, b);
-    return c ? "-" + a : a;
-  };
-
-  jspb.utils.hash64ToDecimalString = function (a, b) {
-    jspb.utils.splitHash64(a);
-    a = jspb.utils.split64Low;
-    var c = jspb.utils.split64High;
-    return b ? jspb.utils.joinSignedDecimalString(a, c) : jspb.utils.joinUnsignedDecimalString(a, c);
-  };
-
-  jspb.utils.hash64ArrayToDecimalStrings = function (a, b) {
-    for (var c = Array(a.length), d = 0; d < a.length; d++) {
-      c[d] = jspb.utils.hash64ToDecimalString(a[d], b);
-    }
-
-    return c;
-  };
-
-  jspb.utils.decimalStringToHash64 = function (a) {
-    function b(a, b) {
-      for (var c = 0; 8 > c && (1 !== a || 0 < b); c++) {
-        b = a * e[c] + b, e[c] = b & 255, b >>>= 8;
-      }
-    }
-
-    function c() {
-      for (var a = 0; 8 > a; a++) {
-        e[a] = ~e[a] & 255;
-      }
-    }
-
-    goog.asserts.assert(0 < a.length);
-    var d = !1;
-    "-" === a[0] && (d = !0, a = a.slice(1));
-
-    for (var e = [0, 0, 0, 0, 0, 0, 0, 0], f = 0; f < a.length; f++) {
-      b(10, jspb.utils.DIGITS.indexOf(a[f]));
-    }
-
-    d && (c(), b(1, 1));
-    return goog.crypt.byteArrayToString(e);
-  };
-
-  jspb.utils.splitDecimalString = function (a) {
-    jspb.utils.splitHash64(jspb.utils.decimalStringToHash64(a));
-  };
-
-  jspb.utils.hash64ToHexString = function (a) {
-    var b = Array(18);
-    b[0] = "0";
-    b[1] = "x";
-
-    for (var c = 0; 8 > c; c++) {
-      var d = a.charCodeAt(7 - c);
-      b[2 * c + 2] = jspb.utils.DIGITS[d >> 4];
-      b[2 * c + 3] = jspb.utils.DIGITS[d & 15];
-    }
-
-    return b.join("");
-  };
-
-  jspb.utils.hexStringToHash64 = function (a) {
-    a = a.toLowerCase();
-    goog.asserts.assert(18 == a.length);
-    goog.asserts.assert("0" == a[0]);
-    goog.asserts.assert("x" == a[1]);
-
-    for (var b = "", c = 0; 8 > c; c++) {
-      var d = jspb.utils.DIGITS.indexOf(a[2 * c + 2]),
-          e = jspb.utils.DIGITS.indexOf(a[2 * c + 3]);
-      b = String.fromCharCode(16 * d + e) + b;
-    }
-
-    return b;
-  };
-
-  jspb.utils.hash64ToNumber = function (a, b) {
-    jspb.utils.splitHash64(a);
-    a = jspb.utils.split64Low;
-    var c = jspb.utils.split64High;
-    return b ? jspb.utils.joinInt64(a, c) : jspb.utils.joinUint64(a, c);
-  };
-
-  jspb.utils.numberToHash64 = function (a) {
-    jspb.utils.splitInt64(a);
-    return jspb.utils.joinHash64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.utils.countVarints = function (a, b, c) {
-    for (var d = 0, e = b; e < c; e++) {
-      d += a[e] >> 7;
-    }
-
-    return c - b - d;
-  };
-
-  jspb.utils.countVarintFields = function (a, b, c, d) {
-    var e = 0;
-    d = 8 * d + jspb.BinaryConstants.WireType.VARINT;
-    if (128 > d) for (; b < c && a[b++] == d;) {
-      for (e++;;) {
-        var f = a[b++];
-        if (0 == (f & 128)) break;
-      }
-    } else for (; b < c;) {
-      for (f = d; 128 < f;) {
-        if (a[b] != (f & 127 | 128)) return e;
-        b++;
-        f >>= 7;
-      }
-
-      if (a[b++] != f) break;
-
-      for (e++; f = a[b++], 0 != (f & 128);) {
-      }
-    }
-    return e;
-  };
-
-  jspb.utils.countFixedFields_ = function (a, b, c, d, e) {
-    var f = 0;
-    if (128 > d) for (; b < c && a[b++] == d;) {
-      f++, b += e;
-    } else for (; b < c;) {
-      for (var g = d; 128 < g;) {
-        if (a[b++] != (g & 127 | 128)) return f;
-        g >>= 7;
-      }
-
-      if (a[b++] != g) break;
-      f++;
-      b += e;
-    }
-    return f;
-  };
-
-  jspb.utils.countFixed32Fields = function (a, b, c, d) {
-    return jspb.utils.countFixedFields_(a, b, c, 8 * d + jspb.BinaryConstants.WireType.FIXED32, 4);
-  };
-
-  jspb.utils.countFixed64Fields = function (a, b, c, d) {
-    return jspb.utils.countFixedFields_(a, b, c, 8 * d + jspb.BinaryConstants.WireType.FIXED64, 8);
-  };
-
-  jspb.utils.countDelimitedFields = function (a, b, c, d) {
-    var e = 0;
-
-    for (d = 8 * d + jspb.BinaryConstants.WireType.DELIMITED; b < c;) {
-      for (var f = d; 128 < f;) {
-        if (a[b++] != (f & 127 | 128)) return e;
-        f >>= 7;
-      }
-
-      if (a[b++] != f) break;
-      e++;
-
-      for (var g = 0, h = 1; f = a[b++], g += (f & 127) * h, h *= 128, 0 != (f & 128);) {
-      }
-
-      b += g;
-    }
-
-    return e;
-  };
-
-  jspb.utils.debugBytesToTextFormat = function (a) {
-    var b = '"';
-
-    if (a) {
-      a = jspb.utils.byteSourceToUint8Array(a);
-
-      for (var c = 0; c < a.length; c++) {
-        b += "\\x", 16 > a[c] && (b += "0"), b += a[c].toString(16);
-      }
-    }
-
-    return b + '"';
-  };
-
-  jspb.utils.debugScalarToTextFormat = function (a) {
-    return goog.isString(a) ? goog.string.quote(a) : a.toString();
-  };
-
-  jspb.utils.stringToByteArray = function (a) {
-    for (var b = new Uint8Array(a.length), c = 0; c < a.length; c++) {
-      var d = a.charCodeAt(c);
-      if (255 < d) throw Error("Conversion error: string contains codepoint outside of byte range");
-      b[c] = d;
-    }
-
-    return b;
-  };
-
-  jspb.utils.byteSourceToUint8Array = function (a) {
-    if (a.constructor === Uint8Array) return a;
-    if (a.constructor === ArrayBuffer || "undefined" != typeof Buffer$1 && a.constructor === Buffer$1 || a.constructor === Array) return new Uint8Array(a);
-    if (a.constructor === String) return goog.crypt.base64.decodeStringToUint8Array(a);
-    goog.asserts.fail("Type not convertible to Uint8Array.");
-    return new Uint8Array(0);
-  };
-
-  jspb.BinaryIterator = function (a, b, c) {
-    this.elements_ = this.nextMethod_ = this.decoder_ = null;
-    this.cursor_ = 0;
-    this.nextValue_ = null;
-    this.atEnd_ = !0;
-    this.init_(a, b, c);
-  };
-
-  jspb.BinaryIterator.prototype.init_ = function (a, b, c) {
-    a && b && (this.decoder_ = a, this.nextMethod_ = b);
-    this.elements_ = c || null;
-    this.cursor_ = 0;
-    this.nextValue_ = null;
-    this.atEnd_ = !this.decoder_ && !this.elements_;
-    this.next();
-  };
-
-  jspb.BinaryIterator.instanceCache_ = [];
-
-  jspb.BinaryIterator.alloc = function (a, b, c) {
-    if (jspb.BinaryIterator.instanceCache_.length) {
-      var d = jspb.BinaryIterator.instanceCache_.pop();
-      d.init_(a, b, c);
-      return d;
-    }
-
-    return new jspb.BinaryIterator(a, b, c);
-  };
-
-  jspb.BinaryIterator.prototype.free = function () {
-    this.clear();
-    100 > jspb.BinaryIterator.instanceCache_.length && jspb.BinaryIterator.instanceCache_.push(this);
-  };
-
-  jspb.BinaryIterator.prototype.clear = function () {
-    this.decoder_ && this.decoder_.free();
-    this.elements_ = this.nextMethod_ = this.decoder_ = null;
-    this.cursor_ = 0;
-    this.nextValue_ = null;
-    this.atEnd_ = !0;
-  };
-
-  jspb.BinaryIterator.prototype.get = function () {
-    return this.nextValue_;
-  };
-
-  jspb.BinaryIterator.prototype.atEnd = function () {
-    return this.atEnd_;
-  };
-
-  jspb.BinaryIterator.prototype.next = function () {
-    var a = this.nextValue_;
-    this.decoder_ ? this.decoder_.atEnd() ? (this.nextValue_ = null, this.atEnd_ = !0) : this.nextValue_ = this.nextMethod_.call(this.decoder_) : this.elements_ && (this.cursor_ == this.elements_.length ? (this.nextValue_ = null, this.atEnd_ = !0) : this.nextValue_ = this.elements_[this.cursor_++]);
-    return a;
-  };
-
-  jspb.BinaryDecoder = function (a, b, c) {
-    this.bytes_ = null;
-    this.tempHigh_ = this.tempLow_ = this.cursor_ = this.end_ = this.start_ = 0;
-    this.error_ = !1;
-    a && this.setBlock(a, b, c);
-  };
-
-  jspb.BinaryDecoder.instanceCache_ = [];
-
-  jspb.BinaryDecoder.alloc = function (a, b, c) {
-    if (jspb.BinaryDecoder.instanceCache_.length) {
-      var d = jspb.BinaryDecoder.instanceCache_.pop();
-      a && d.setBlock(a, b, c);
-      return d;
-    }
-
-    return new jspb.BinaryDecoder(a, b, c);
-  };
-
-  jspb.BinaryDecoder.prototype.free = function () {
-    this.clear();
-    100 > jspb.BinaryDecoder.instanceCache_.length && jspb.BinaryDecoder.instanceCache_.push(this);
-  };
-
-  jspb.BinaryDecoder.prototype.clone = function () {
-    return jspb.BinaryDecoder.alloc(this.bytes_, this.start_, this.end_ - this.start_);
-  };
-
-  jspb.BinaryDecoder.prototype.clear = function () {
-    this.bytes_ = null;
-    this.cursor_ = this.end_ = this.start_ = 0;
-    this.error_ = !1;
-  };
-
-  jspb.BinaryDecoder.prototype.getBuffer = function () {
-    return this.bytes_;
-  };
-
-  jspb.BinaryDecoder.prototype.setBlock = function (a, b, c) {
-    this.bytes_ = jspb.utils.byteSourceToUint8Array(a);
-    this.start_ = goog.isDef(b) ? b : 0;
-    this.end_ = goog.isDef(c) ? this.start_ + c : this.bytes_.length;
-    this.cursor_ = this.start_;
-  };
-
-  jspb.BinaryDecoder.prototype.getEnd = function () {
-    return this.end_;
-  };
-
-  jspb.BinaryDecoder.prototype.setEnd = function (a) {
-    this.end_ = a;
-  };
-
-  jspb.BinaryDecoder.prototype.reset = function () {
-    this.cursor_ = this.start_;
-  };
-
-  jspb.BinaryDecoder.prototype.getCursor = function () {
-    return this.cursor_;
-  };
-
-  jspb.BinaryDecoder.prototype.setCursor = function (a) {
-    this.cursor_ = a;
-  };
-
-  jspb.BinaryDecoder.prototype.advance = function (a) {
-    this.cursor_ += a;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-  };
-
-  jspb.BinaryDecoder.prototype.atEnd = function () {
-    return this.cursor_ == this.end_;
-  };
-
-  jspb.BinaryDecoder.prototype.pastEnd = function () {
-    return this.cursor_ > this.end_;
-  };
-
-  jspb.BinaryDecoder.prototype.getError = function () {
-    return this.error_ || 0 > this.cursor_ || this.cursor_ > this.end_;
-  };
-
-  jspb.BinaryDecoder.prototype.readSplitVarint64_ = function () {
-    for (var a, b = 0, c, d = 0; 4 > d; d++) {
-      if (a = this.bytes_[this.cursor_++], b |= (a & 127) << 7 * d, 128 > a) {
-        this.tempLow_ = b >>> 0;
-        this.tempHigh_ = 0;
-        return;
-      }
-    }
-
-    a = this.bytes_[this.cursor_++];
-    b |= (a & 127) << 28;
-    c = 0 | (a & 127) >> 4;
-    if (128 > a) this.tempLow_ = b >>> 0, this.tempHigh_ = c >>> 0;else {
-      for (d = 0; 5 > d; d++) {
-        if (a = this.bytes_[this.cursor_++], c |= (a & 127) << 7 * d + 3, 128 > a) {
-          this.tempLow_ = b >>> 0;
-          this.tempHigh_ = c >>> 0;
-          return;
+      if ("undefined" !== typeof d.superClass_) {
+        for (var e = Array(arguments.length - 1), f = 1; f < arguments.length; f++) {
+          e[f - 1] = arguments[f];
         }
+
+        return d.superClass_.constructor.apply(a, e);
       }
 
-      goog.asserts.fail("Failed to read varint, encoding is invalid.");
-      this.error_ = !0;
-    }
-  };
+      if ("string" != typeof b && "symbol" != _typeof(b)) throw Error("method names provided to goog.base must be a string or a symbol");
+      e = Array(arguments.length - 2);
 
-  jspb.BinaryDecoder.prototype.skipVarint = function () {
-    for (; this.bytes_[this.cursor_] & 128;) {
-      this.cursor_++;
-    }
-
-    this.cursor_++;
-  };
-
-  jspb.BinaryDecoder.prototype.unskipVarint = function (a) {
-    for (; 128 < a;) {
-      this.cursor_--, a >>>= 7;
-    }
-
-    this.cursor_--;
-  };
-
-  jspb.BinaryDecoder.prototype.readUnsignedVarint32 = function () {
-    var a = this.bytes_;
-    var b = a[this.cursor_ + 0];
-    var c = b & 127;
-    if (128 > b) return this.cursor_ += 1, goog.asserts.assert(this.cursor_ <= this.end_), c;
-    b = a[this.cursor_ + 1];
-    c |= (b & 127) << 7;
-    if (128 > b) return this.cursor_ += 2, goog.asserts.assert(this.cursor_ <= this.end_), c;
-    b = a[this.cursor_ + 2];
-    c |= (b & 127) << 14;
-    if (128 > b) return this.cursor_ += 3, goog.asserts.assert(this.cursor_ <= this.end_), c;
-    b = a[this.cursor_ + 3];
-    c |= (b & 127) << 21;
-    if (128 > b) return this.cursor_ += 4, goog.asserts.assert(this.cursor_ <= this.end_), c;
-    b = a[this.cursor_ + 4];
-    c |= (b & 15) << 28;
-    if (128 > b) return this.cursor_ += 5, goog.asserts.assert(this.cursor_ <= this.end_), c >>> 0;
-    this.cursor_ += 5;
-    128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && goog.asserts.assert(!1);
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return c;
-  };
-
-  jspb.BinaryDecoder.prototype.readSignedVarint32 = jspb.BinaryDecoder.prototype.readUnsignedVarint32;
-
-  jspb.BinaryDecoder.prototype.readUnsignedVarint32String = function () {
-    return this.readUnsignedVarint32().toString();
-  };
-
-  jspb.BinaryDecoder.prototype.readSignedVarint32String = function () {
-    return this.readSignedVarint32().toString();
-  };
-
-  jspb.BinaryDecoder.prototype.readZigzagVarint32 = function () {
-    var a = this.readUnsignedVarint32();
-    return a >>> 1 ^ -(a & 1);
-  };
-
-  jspb.BinaryDecoder.prototype.readUnsignedVarint64 = function () {
-    this.readSplitVarint64_();
-    return jspb.utils.joinUint64(this.tempLow_, this.tempHigh_);
-  };
-
-  jspb.BinaryDecoder.prototype.readUnsignedVarint64String = function () {
-    this.readSplitVarint64_();
-    return jspb.utils.joinUnsignedDecimalString(this.tempLow_, this.tempHigh_);
-  };
-
-  jspb.BinaryDecoder.prototype.readSignedVarint64 = function () {
-    this.readSplitVarint64_();
-    return jspb.utils.joinInt64(this.tempLow_, this.tempHigh_);
-  };
-
-  jspb.BinaryDecoder.prototype.readSignedVarint64String = function () {
-    this.readSplitVarint64_();
-    return jspb.utils.joinSignedDecimalString(this.tempLow_, this.tempHigh_);
-  };
-
-  jspb.BinaryDecoder.prototype.readZigzagVarint64 = function () {
-    this.readSplitVarint64_();
-    return jspb.utils.joinZigzag64(this.tempLow_, this.tempHigh_);
-  };
-
-  jspb.BinaryDecoder.prototype.readZigzagVarint64String = function () {
-    return this.readZigzagVarint64().toString();
-  };
-
-  jspb.BinaryDecoder.prototype.readUint8 = function () {
-    var a = this.bytes_[this.cursor_ + 0];
-    this.cursor_ += 1;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return a;
-  };
-
-  jspb.BinaryDecoder.prototype.readUint16 = function () {
-    var a = this.bytes_[this.cursor_ + 0],
-        b = this.bytes_[this.cursor_ + 1];
-    this.cursor_ += 2;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return a << 0 | b << 8;
-  };
-
-  jspb.BinaryDecoder.prototype.readUint32 = function () {
-    var a = this.bytes_[this.cursor_ + 0],
-        b = this.bytes_[this.cursor_ + 1],
-        c = this.bytes_[this.cursor_ + 2],
-        d = this.bytes_[this.cursor_ + 3];
-    this.cursor_ += 4;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return (a << 0 | b << 8 | c << 16 | d << 24) >>> 0;
-  };
-
-  jspb.BinaryDecoder.prototype.readUint64 = function () {
-    var a = this.readUint32(),
-        b = this.readUint32();
-    return jspb.utils.joinUint64(a, b);
-  };
-
-  jspb.BinaryDecoder.prototype.readUint64String = function () {
-    var a = this.readUint32(),
-        b = this.readUint32();
-    return jspb.utils.joinUnsignedDecimalString(a, b);
-  };
-
-  jspb.BinaryDecoder.prototype.readInt8 = function () {
-    var a = this.bytes_[this.cursor_ + 0];
-    this.cursor_ += 1;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return a << 24 >> 24;
-  };
-
-  jspb.BinaryDecoder.prototype.readInt16 = function () {
-    var a = this.bytes_[this.cursor_ + 0],
-        b = this.bytes_[this.cursor_ + 1];
-    this.cursor_ += 2;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return (a << 0 | b << 8) << 16 >> 16;
-  };
-
-  jspb.BinaryDecoder.prototype.readInt32 = function () {
-    var a = this.bytes_[this.cursor_ + 0],
-        b = this.bytes_[this.cursor_ + 1],
-        c = this.bytes_[this.cursor_ + 2],
-        d = this.bytes_[this.cursor_ + 3];
-    this.cursor_ += 4;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return a << 0 | b << 8 | c << 16 | d << 24;
-  };
-
-  jspb.BinaryDecoder.prototype.readInt64 = function () {
-    var a = this.readUint32(),
-        b = this.readUint32();
-    return jspb.utils.joinInt64(a, b);
-  };
-
-  jspb.BinaryDecoder.prototype.readInt64String = function () {
-    var a = this.readUint32(),
-        b = this.readUint32();
-    return jspb.utils.joinSignedDecimalString(a, b);
-  };
-
-  jspb.BinaryDecoder.prototype.readFloat = function () {
-    var a = this.readUint32();
-    return jspb.utils.joinFloat32(a, 0);
-  };
-
-  jspb.BinaryDecoder.prototype.readDouble = function () {
-    var a = this.readUint32(),
-        b = this.readUint32();
-    return jspb.utils.joinFloat64(a, b);
-  };
-
-  jspb.BinaryDecoder.prototype.readBool = function () {
-    return !!this.bytes_[this.cursor_++];
-  };
-
-  jspb.BinaryDecoder.prototype.readEnum = function () {
-    return this.readSignedVarint32();
-  };
-
-  jspb.BinaryDecoder.prototype.readString = function (a) {
-    var b = this.bytes_,
-        c = this.cursor_;
-    a = c + a;
-
-    for (var d = [], e = ""; c < a;) {
-      var f = b[c++];
-      if (128 > f) d.push(f);else if (192 > f) continue;else if (224 > f) {
-        var g = b[c++];
-        d.push((f & 31) << 6 | g & 63);
-      } else if (240 > f) {
-        g = b[c++];
-        var h = b[c++];
-        d.push((f & 15) << 12 | (g & 63) << 6 | h & 63);
-      } else if (248 > f) {
-        g = b[c++];
-        h = b[c++];
-        var k = b[c++];
-        f = (f & 7) << 18 | (g & 63) << 12 | (h & 63) << 6 | k & 63;
-        f -= 65536;
-        d.push((f >> 10 & 1023) + 55296, (f & 1023) + 56320);
-      }
-      8192 <= d.length && (e += String.fromCharCode.apply(null, d), d.length = 0);
-    }
-
-    e += goog.crypt.byteArrayToString(d);
-    this.cursor_ = c;
-    return e;
-  };
-
-  jspb.BinaryDecoder.prototype.readStringWithLength = function () {
-    var a = this.readUnsignedVarint32();
-    return this.readString(a);
-  };
-
-  jspb.BinaryDecoder.prototype.readBytes = function (a) {
-    if (0 > a || this.cursor_ + a > this.bytes_.length) return this.error_ = !0, goog.asserts.fail("Invalid byte length!"), new Uint8Array(0);
-    var b = this.bytes_.subarray(this.cursor_, this.cursor_ + a);
-    this.cursor_ += a;
-    goog.asserts.assert(this.cursor_ <= this.end_);
-    return b;
-  };
-
-  jspb.BinaryDecoder.prototype.readVarintHash64 = function () {
-    this.readSplitVarint64_();
-    return jspb.utils.joinHash64(this.tempLow_, this.tempHigh_);
-  };
-
-  jspb.BinaryDecoder.prototype.readFixedHash64 = function () {
-    var a = this.bytes_,
-        b = this.cursor_,
-        c = a[b + 0],
-        d = a[b + 1],
-        e = a[b + 2],
-        f = a[b + 3],
-        g = a[b + 4],
-        h = a[b + 5],
-        k = a[b + 6];
-    a = a[b + 7];
-    this.cursor_ += 8;
-    return String.fromCharCode(c, d, e, f, g, h, k, a);
-  };
-
-  jspb.BinaryReader = function (a, b, c) {
-    this.decoder_ = jspb.BinaryDecoder.alloc(a, b, c);
-    this.fieldCursor_ = this.decoder_.getCursor();
-    this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
-    this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
-    this.error_ = !1;
-    this.readCallbacks_ = null;
-  };
-
-  jspb.BinaryReader.instanceCache_ = [];
-
-  jspb.BinaryReader.alloc = function (a, b, c) {
-    if (jspb.BinaryReader.instanceCache_.length) {
-      var d = jspb.BinaryReader.instanceCache_.pop();
-      a && d.decoder_.setBlock(a, b, c);
-      return d;
-    }
-
-    return new jspb.BinaryReader(a, b, c);
-  };
-
-  jspb.BinaryReader.prototype.alloc = jspb.BinaryReader.alloc;
-
-  jspb.BinaryReader.prototype.free = function () {
-    this.decoder_.clear();
-    this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
-    this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
-    this.error_ = !1;
-    this.readCallbacks_ = null;
-    100 > jspb.BinaryReader.instanceCache_.length && jspb.BinaryReader.instanceCache_.push(this);
-  };
-
-  jspb.BinaryReader.prototype.getFieldCursor = function () {
-    return this.fieldCursor_;
-  };
-
-  jspb.BinaryReader.prototype.getCursor = function () {
-    return this.decoder_.getCursor();
-  };
-
-  jspb.BinaryReader.prototype.getBuffer = function () {
-    return this.decoder_.getBuffer();
-  };
-
-  jspb.BinaryReader.prototype.getFieldNumber = function () {
-    return this.nextField_;
-  };
-
-  jspb.BinaryReader.prototype.getWireType = function () {
-    return this.nextWireType_;
-  };
-
-  jspb.BinaryReader.prototype.isEndGroup = function () {
-    return this.nextWireType_ == jspb.BinaryConstants.WireType.END_GROUP;
-  };
-
-  jspb.BinaryReader.prototype.getError = function () {
-    return this.error_ || this.decoder_.getError();
-  };
-
-  jspb.BinaryReader.prototype.setBlock = function (a, b, c) {
-    this.decoder_.setBlock(a, b, c);
-    this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
-    this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
-  };
-
-  jspb.BinaryReader.prototype.reset = function () {
-    this.decoder_.reset();
-    this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
-    this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
-  };
-
-  jspb.BinaryReader.prototype.advance = function (a) {
-    this.decoder_.advance(a);
-  };
-
-  jspb.BinaryReader.prototype.nextField = function () {
-    if (this.decoder_.atEnd()) return !1;
-    if (this.getError()) return goog.asserts.fail("Decoder hit an error"), !1;
-    this.fieldCursor_ = this.decoder_.getCursor();
-    var a = this.decoder_.readUnsignedVarint32(),
-        b = a >>> 3;
-    a &= 7;
-    if (a != jspb.BinaryConstants.WireType.VARINT && a != jspb.BinaryConstants.WireType.FIXED32 && a != jspb.BinaryConstants.WireType.FIXED64 && a != jspb.BinaryConstants.WireType.DELIMITED && a != jspb.BinaryConstants.WireType.START_GROUP && a != jspb.BinaryConstants.WireType.END_GROUP) return goog.asserts.fail("Invalid wire type: %s (at position %s)", a, this.fieldCursor_), this.error_ = !0, !1;
-    this.nextField_ = b;
-    this.nextWireType_ = a;
-    return !0;
-  };
-
-  jspb.BinaryReader.prototype.unskipHeader = function () {
-    this.decoder_.unskipVarint(this.nextField_ << 3 | this.nextWireType_);
-  };
-
-  jspb.BinaryReader.prototype.skipMatchingFields = function () {
-    var a = this.nextField_;
-
-    for (this.unskipHeader(); this.nextField() && this.getFieldNumber() == a;) {
-      this.skipField();
-    }
-
-    this.decoder_.atEnd() || this.unskipHeader();
-  };
-
-  jspb.BinaryReader.prototype.skipVarintField = function () {
-    this.nextWireType_ != jspb.BinaryConstants.WireType.VARINT ? (goog.asserts.fail("Invalid wire type for skipVarintField"), this.skipField()) : this.decoder_.skipVarint();
-  };
-
-  jspb.BinaryReader.prototype.skipDelimitedField = function () {
-    if (this.nextWireType_ != jspb.BinaryConstants.WireType.DELIMITED) goog.asserts.fail("Invalid wire type for skipDelimitedField"), this.skipField();else {
-      var a = this.decoder_.readUnsignedVarint32();
-      this.decoder_.advance(a);
-    }
-  };
-
-  jspb.BinaryReader.prototype.skipFixed32Field = function () {
-    this.nextWireType_ != jspb.BinaryConstants.WireType.FIXED32 ? (goog.asserts.fail("Invalid wire type for skipFixed32Field"), this.skipField()) : this.decoder_.advance(4);
-  };
-
-  jspb.BinaryReader.prototype.skipFixed64Field = function () {
-    this.nextWireType_ != jspb.BinaryConstants.WireType.FIXED64 ? (goog.asserts.fail("Invalid wire type for skipFixed64Field"), this.skipField()) : this.decoder_.advance(8);
-  };
-
-  jspb.BinaryReader.prototype.skipGroup = function () {
-    var a = this.nextField_;
-
-    do {
-      if (!this.nextField()) {
-        goog.asserts.fail("Unmatched start-group tag: stream EOF");
-        this.error_ = !0;
-        break;
+      for (f = 2; f < arguments.length; f++) {
+        e[f - 2] = arguments[f];
       }
 
-      if (this.nextWireType_ == jspb.BinaryConstants.WireType.END_GROUP) {
-        this.nextField_ != a && (goog.asserts.fail("Unmatched end-group tag"), this.error_ = !0);
-        break;
+      f = !1;
+
+      for (var g = a.constructor.prototype; g; g = Object.getPrototypeOf(g)) {
+        if (g[b] === d) f = !0;else if (f) return g[b].apply(a, e);
       }
 
-      this.skipField();
-    } while (1);
-  };
-
-  jspb.BinaryReader.prototype.skipField = function () {
-    switch (this.nextWireType_) {
-      case jspb.BinaryConstants.WireType.VARINT:
-        this.skipVarintField();
-        break;
-
-      case jspb.BinaryConstants.WireType.FIXED64:
-        this.skipFixed64Field();
-        break;
-
-      case jspb.BinaryConstants.WireType.DELIMITED:
-        this.skipDelimitedField();
-        break;
-
-      case jspb.BinaryConstants.WireType.FIXED32:
-        this.skipFixed32Field();
-        break;
-
-      case jspb.BinaryConstants.WireType.START_GROUP:
-        this.skipGroup();
-        break;
-
-      default:
-        goog.asserts.fail("Invalid wire encoding for field.");
-    }
-  };
-
-  jspb.BinaryReader.prototype.registerReadCallback = function (a, b) {
-    goog.isNull(this.readCallbacks_) && (this.readCallbacks_ = {});
-    goog.asserts.assert(!this.readCallbacks_[a]);
-    this.readCallbacks_[a] = b;
-  };
-
-  jspb.BinaryReader.prototype.runReadCallback = function (a) {
-    goog.asserts.assert(!goog.isNull(this.readCallbacks_));
-    a = this.readCallbacks_[a];
-    goog.asserts.assert(a);
-    return a(this);
-  };
-
-  jspb.BinaryReader.prototype.readAny = function (a) {
-    this.nextWireType_ = jspb.BinaryConstants.FieldTypeToWireType(a);
-    var b = jspb.BinaryConstants.FieldType;
-
-    switch (a) {
-      case b.DOUBLE:
-        return this.readDouble();
-
-      case b.FLOAT:
-        return this.readFloat();
-
-      case b.INT64:
-        return this.readInt64();
-
-      case b.UINT64:
-        return this.readUint64();
-
-      case b.INT32:
-        return this.readInt32();
-
-      case b.FIXED64:
-        return this.readFixed64();
-
-      case b.FIXED32:
-        return this.readFixed32();
-
-      case b.BOOL:
-        return this.readBool();
-
-      case b.STRING:
-        return this.readString();
-
-      case b.GROUP:
-        goog.asserts.fail("Group field type not supported in readAny()");
-
-      case b.MESSAGE:
-        goog.asserts.fail("Message field type not supported in readAny()");
-
-      case b.BYTES:
-        return this.readBytes();
-
-      case b.UINT32:
-        return this.readUint32();
-
-      case b.ENUM:
-        return this.readEnum();
-
-      case b.SFIXED32:
-        return this.readSfixed32();
-
-      case b.SFIXED64:
-        return this.readSfixed64();
-
-      case b.SINT32:
-        return this.readSint32();
-
-      case b.SINT64:
-        return this.readSint64();
-
-      case b.FHASH64:
-        return this.readFixedHash64();
-
-      case b.VHASH64:
-        return this.readVarintHash64();
-
-      default:
-        goog.asserts.fail("Invalid field type in readAny()");
-    }
-
-    return 0;
-  };
-
-  jspb.BinaryReader.prototype.readMessage = function (a, b) {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
-    var c = this.decoder_.getEnd(),
-        d = this.decoder_.readUnsignedVarint32();
-    d = this.decoder_.getCursor() + d;
-    this.decoder_.setEnd(d);
-    b(a, this);
-    this.decoder_.setCursor(d);
-    this.decoder_.setEnd(c);
-  };
-
-  jspb.BinaryReader.prototype.readGroup = function (a, b, c) {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.START_GROUP);
-    goog.asserts.assert(this.nextField_ == a);
-    c(b, this);
-    this.error_ || this.nextWireType_ == jspb.BinaryConstants.WireType.END_GROUP || (goog.asserts.fail("Group submessage did not end with an END_GROUP tag"), this.error_ = !0);
-  };
-
-  jspb.BinaryReader.prototype.getFieldDecoder = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
-    var a = this.decoder_.readUnsignedVarint32(),
-        b = this.decoder_.getCursor(),
-        c = b + a;
-    a = jspb.BinaryDecoder.alloc(this.decoder_.getBuffer(), b, a);
-    this.decoder_.setCursor(c);
-    return a;
-  };
-
-  jspb.BinaryReader.prototype.readInt32 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readSignedVarint32();
-  };
-
-  jspb.BinaryReader.prototype.readInt32String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readSignedVarint32String();
-  };
-
-  jspb.BinaryReader.prototype.readInt64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readSignedVarint64();
-  };
-
-  jspb.BinaryReader.prototype.readInt64String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readSignedVarint64String();
-  };
-
-  jspb.BinaryReader.prototype.readUint32 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readUnsignedVarint32();
-  };
-
-  jspb.BinaryReader.prototype.readUint32String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readUnsignedVarint32String();
-  };
-
-  jspb.BinaryReader.prototype.readUint64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readUnsignedVarint64();
-  };
-
-  jspb.BinaryReader.prototype.readUint64String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readUnsignedVarint64String();
-  };
-
-  jspb.BinaryReader.prototype.readSint32 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readZigzagVarint32();
-  };
-
-  jspb.BinaryReader.prototype.readSint64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readZigzagVarint64();
-  };
-
-  jspb.BinaryReader.prototype.readSint64String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readZigzagVarint64String();
-  };
-
-  jspb.BinaryReader.prototype.readFixed32 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
-    return this.decoder_.readUint32();
-  };
-
-  jspb.BinaryReader.prototype.readFixed64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
-    return this.decoder_.readUint64();
-  };
-
-  jspb.BinaryReader.prototype.readFixed64String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
-    return this.decoder_.readUint64String();
-  };
-
-  jspb.BinaryReader.prototype.readSfixed32 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
-    return this.decoder_.readInt32();
-  };
-
-  jspb.BinaryReader.prototype.readSfixed32String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
-    return this.decoder_.readInt32().toString();
-  };
-
-  jspb.BinaryReader.prototype.readSfixed64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
-    return this.decoder_.readInt64();
-  };
-
-  jspb.BinaryReader.prototype.readSfixed64String = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
-    return this.decoder_.readInt64String();
-  };
-
-  jspb.BinaryReader.prototype.readFloat = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
-    return this.decoder_.readFloat();
-  };
-
-  jspb.BinaryReader.prototype.readDouble = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
-    return this.decoder_.readDouble();
-  };
-
-  jspb.BinaryReader.prototype.readBool = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return !!this.decoder_.readUnsignedVarint32();
-  };
-
-  jspb.BinaryReader.prototype.readEnum = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readSignedVarint64();
-  };
-
-  jspb.BinaryReader.prototype.readString = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
-    var a = this.decoder_.readUnsignedVarint32();
-    return this.decoder_.readString(a);
-  };
-
-  jspb.BinaryReader.prototype.readBytes = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
-    var a = this.decoder_.readUnsignedVarint32();
-    return this.decoder_.readBytes(a);
-  };
-
-  jspb.BinaryReader.prototype.readVarintHash64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
-    return this.decoder_.readVarintHash64();
-  };
-
-  jspb.BinaryReader.prototype.readFixedHash64 = function () {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
-    return this.decoder_.readFixedHash64();
-  };
-
-  jspb.BinaryReader.prototype.readPackedField_ = function (a) {
-    goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
-    var b = this.decoder_.readUnsignedVarint32();
-    b = this.decoder_.getCursor() + b;
-
-    for (var c = []; this.decoder_.getCursor() < b;) {
-      c.push(a.call(this.decoder_));
-    }
-
-    return c;
-  };
-
-  jspb.BinaryReader.prototype.readPackedInt32 = function () {
-    return this.readPackedField_(this.decoder_.readSignedVarint32);
-  };
-
-  jspb.BinaryReader.prototype.readPackedInt32String = function () {
-    return this.readPackedField_(this.decoder_.readSignedVarint32String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedInt64 = function () {
-    return this.readPackedField_(this.decoder_.readSignedVarint64);
-  };
-
-  jspb.BinaryReader.prototype.readPackedInt64String = function () {
-    return this.readPackedField_(this.decoder_.readSignedVarint64String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedUint32 = function () {
-    return this.readPackedField_(this.decoder_.readUnsignedVarint32);
-  };
-
-  jspb.BinaryReader.prototype.readPackedUint32String = function () {
-    return this.readPackedField_(this.decoder_.readUnsignedVarint32String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedUint64 = function () {
-    return this.readPackedField_(this.decoder_.readUnsignedVarint64);
-  };
-
-  jspb.BinaryReader.prototype.readPackedUint64String = function () {
-    return this.readPackedField_(this.decoder_.readUnsignedVarint64String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedSint32 = function () {
-    return this.readPackedField_(this.decoder_.readZigzagVarint32);
-  };
-
-  jspb.BinaryReader.prototype.readPackedSint64 = function () {
-    return this.readPackedField_(this.decoder_.readZigzagVarint64);
-  };
-
-  jspb.BinaryReader.prototype.readPackedSint64String = function () {
-    return this.readPackedField_(this.decoder_.readZigzagVarint64String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedFixed32 = function () {
-    return this.readPackedField_(this.decoder_.readUint32);
-  };
-
-  jspb.BinaryReader.prototype.readPackedFixed64 = function () {
-    return this.readPackedField_(this.decoder_.readUint64);
-  };
-
-  jspb.BinaryReader.prototype.readPackedFixed64String = function () {
-    return this.readPackedField_(this.decoder_.readUint64String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedSfixed32 = function () {
-    return this.readPackedField_(this.decoder_.readInt32);
-  };
-
-  jspb.BinaryReader.prototype.readPackedSfixed64 = function () {
-    return this.readPackedField_(this.decoder_.readInt64);
-  };
-
-  jspb.BinaryReader.prototype.readPackedSfixed64String = function () {
-    return this.readPackedField_(this.decoder_.readInt64String);
-  };
-
-  jspb.BinaryReader.prototype.readPackedFloat = function () {
-    return this.readPackedField_(this.decoder_.readFloat);
-  };
-
-  jspb.BinaryReader.prototype.readPackedDouble = function () {
-    return this.readPackedField_(this.decoder_.readDouble);
-  };
-
-  jspb.BinaryReader.prototype.readPackedBool = function () {
-    return this.readPackedField_(this.decoder_.readBool);
-  };
-
-  jspb.BinaryReader.prototype.readPackedEnum = function () {
-    return this.readPackedField_(this.decoder_.readEnum);
-  };
-
-  jspb.BinaryReader.prototype.readPackedVarintHash64 = function () {
-    return this.readPackedField_(this.decoder_.readVarintHash64);
-  };
-
-  jspb.BinaryReader.prototype.readPackedFixedHash64 = function () {
-    return this.readPackedField_(this.decoder_.readFixedHash64);
-  };
-
-  jspb.Map = function (a, b) {
-    this.arr_ = a;
-    this.valueCtor_ = b;
-    this.map_ = {};
-    this.arrClean = !0;
-    0 < this.arr_.length && this.loadFromArray_();
-  };
-
-  jspb.Map.prototype.loadFromArray_ = function () {
-    for (var a = 0; a < this.arr_.length; a++) {
-      var b = this.arr_[a],
-          c = b[0];
-      this.map_[c.toString()] = new jspb.Map.Entry_(c, b[1]);
-    }
-
-    this.arrClean = !0;
-  };
-
-  jspb.Map.prototype.toArray = function () {
-    if (this.arrClean) {
-      if (this.valueCtor_) {
-        var a = this.map_,
-            b;
-
-        for (b in a) {
-          if (Object.prototype.hasOwnProperty.call(a, b)) {
-            var c = a[b].valueWrapper;
-            c && c.toArray();
-          }
-        }
-      }
-    } else {
-      this.arr_.length = 0;
-      a = this.stringKeys_();
-      a.sort();
-
-      for (b = 0; b < a.length; b++) {
-        var d = this.map_[a[b]];
-        (c = d.valueWrapper) && c.toArray();
-        this.arr_.push([d.key, d.value]);
-      }
-
-      this.arrClean = !0;
-    }
-
-    return this.arr_;
-  };
-
-  jspb.Map.prototype.toObject = function (a, b) {
-    for (var c = this.toArray(), d = [], e = 0; e < c.length; e++) {
-      var f = this.map_[c[e][0].toString()];
-      this.wrapEntry_(f);
-      var g = f.valueWrapper;
-      g ? (goog.asserts.assert(b), d.push([f.key, b(a, g)])) : d.push([f.key, f.value]);
-    }
-
-    return d;
-  };
-
-  jspb.Map.fromObject = function (a, b, c) {
-    b = new jspb.Map([], b);
-
-    for (var d = 0; d < a.length; d++) {
-      var e = a[d][0],
-          f = c(a[d][1]);
-      b.set(e, f);
-    }
-
-    return b;
-  };
-
-  jspb.Map.ArrayIteratorIterable_ = function (a) {
-    this.idx_ = 0;
-    this.arr_ = a;
-  };
-
-  jspb.Map.ArrayIteratorIterable_.prototype.next = function () {
-    return this.idx_ < this.arr_.length ? {
-      done: !1,
-      value: this.arr_[this.idx_++]
-    } : {
-      done: !0,
-      value: void 0
+      if (a[b] === d) return a.constructor.prototype[b].apply(a, e);
+      throw Error("goog.base called from a method of one name to a method of a different name");
     };
-  };
 
-  "undefined" != typeof Symbol && (jspb.Map.ArrayIteratorIterable_.prototype[Symbol.iterator] = function () {
-    return this;
-  });
-
-  jspb.Map.prototype.getLength = function () {
-    return this.stringKeys_().length;
-  };
-
-  jspb.Map.prototype.clear = function () {
-    this.map_ = {};
-    this.arrClean = !1;
-  };
-
-  jspb.Map.prototype.del = function (a) {
-    a = a.toString();
-    var b = this.map_.hasOwnProperty(a);
-    delete this.map_[a];
-    this.arrClean = !1;
-    return b;
-  };
-
-  jspb.Map.prototype.getEntryList = function () {
-    var a = [],
-        b = this.stringKeys_();
-    b.sort();
-
-    for (var c = 0; c < b.length; c++) {
-      var d = this.map_[b[c]];
-      a.push([d.key, d.value]);
-    }
-
-    return a;
-  };
-
-  jspb.Map.prototype.entries = function () {
-    var a = [],
-        b = this.stringKeys_();
-    b.sort();
-
-    for (var c = 0; c < b.length; c++) {
-      var d = this.map_[b[c]];
-      a.push([d.key, this.wrapEntry_(d)]);
-    }
-
-    return new jspb.Map.ArrayIteratorIterable_(a);
-  };
-
-  jspb.Map.prototype.keys = function () {
-    var a = [],
-        b = this.stringKeys_();
-    b.sort();
-
-    for (var c = 0; c < b.length; c++) {
-      a.push(this.map_[b[c]].key);
-    }
-
-    return new jspb.Map.ArrayIteratorIterable_(a);
-  };
-
-  jspb.Map.prototype.values = function () {
-    var a = [],
-        b = this.stringKeys_();
-    b.sort();
-
-    for (var c = 0; c < b.length; c++) {
-      a.push(this.wrapEntry_(this.map_[b[c]]));
-    }
-
-    return new jspb.Map.ArrayIteratorIterable_(a);
-  };
-
-  jspb.Map.prototype.forEach = function (a, b) {
-    var c = this.stringKeys_();
-    c.sort();
-
-    for (var d = 0; d < c.length; d++) {
-      var e = this.map_[c[d]];
-      a.call(b, this.wrapEntry_(e), e.key, this);
-    }
-  };
-
-  jspb.Map.prototype.set = function (a, b) {
-    var c = new jspb.Map.Entry_(a);
-    this.valueCtor_ ? (c.valueWrapper = b, c.value = b.toArray()) : c.value = b;
-    this.map_[a.toString()] = c;
-    this.arrClean = !1;
-    return this;
-  };
-
-  jspb.Map.prototype.wrapEntry_ = function (a) {
-    return this.valueCtor_ ? (a.valueWrapper || (a.valueWrapper = new this.valueCtor_(a.value)), a.valueWrapper) : a.value;
-  };
-
-  jspb.Map.prototype.get = function (a) {
-    if (a = this.map_[a.toString()]) return this.wrapEntry_(a);
-  };
-
-  jspb.Map.prototype.has = function (a) {
-    return a.toString() in this.map_;
-  };
-
-  jspb.Map.prototype.serializeBinary = function (a, b, c, d, e) {
-    var f = this.stringKeys_();
-    f.sort();
-
-    for (var g = 0; g < f.length; g++) {
-      var h = this.map_[f[g]];
-      b.beginSubMessage(a);
-      c.call(b, 1, h.key);
-      this.valueCtor_ ? d.call(b, 2, this.wrapEntry_(h), e) : d.call(b, 2, h.value);
-      b.endSubMessage();
-    }
-  };
-
-  jspb.Map.deserializeBinary = function (a, b, c, d, e, f) {
-    for (var g = void 0; b.nextField() && !b.isEndGroup();) {
-      var h = b.getFieldNumber();
-      1 == h ? f = c.call(b) : 2 == h && (a.valueCtor_ ? (goog.asserts.assert(e), g = new a.valueCtor_(), d.call(b, g, e)) : g = d.call(b));
-    }
-
-    goog.asserts.assert(void 0 != f);
-    goog.asserts.assert(void 0 != g);
-    a.set(f, g);
-  };
-
-  jspb.Map.prototype.stringKeys_ = function () {
-    var a = this.map_,
-        b = [],
-        c;
-
-    for (c in a) {
-      Object.prototype.hasOwnProperty.call(a, c) && b.push(c);
-    }
-
-    return b;
-  };
-
-  jspb.Map.Entry_ = function (a, b) {
-    this.key = a;
-    this.value = b;
-    this.valueWrapper = void 0;
-  };
-
-  jspb.ExtensionFieldInfo = function (a, b, c, d, e) {
-    this.fieldIndex = a;
-    this.fieldName = b;
-    this.ctor = c;
-    this.toObjectFn = d;
-    this.isRepeated = e;
-  };
-
-  jspb.ExtensionFieldBinaryInfo = function (a, b, c, d, e, f) {
-    this.fieldInfo = a;
-    this.binaryReaderFn = b;
-    this.binaryWriterFn = c;
-    this.binaryMessageSerializeFn = d;
-    this.binaryMessageDeserializeFn = e;
-    this.isPacked = f;
-  };
-
-  jspb.ExtensionFieldInfo.prototype.isMessageType = function () {
-    return !!this.ctor;
-  };
-
-  jspb.Message = function () {};
-
-  jspb.Message.GENERATE_TO_OBJECT = !0;
-  jspb.Message.GENERATE_FROM_OBJECT = !goog.DISALLOW_TEST_ONLY_CODE;
-  jspb.Message.GENERATE_TO_STRING = !0;
-  jspb.Message.ASSUME_LOCAL_ARRAYS = !1;
-  jspb.Message.SERIALIZE_EMPTY_TRAILING_FIELDS = !0;
-  jspb.Message.SUPPORTS_UINT8ARRAY_ = "function" == typeof Uint8Array;
-
-  jspb.Message.prototype.getJsPbMessageId = function () {
-    return this.messageId_;
-  };
-
-  jspb.Message.getIndex_ = function (a, b) {
-    return b + a.arrayIndexOffset_;
-  };
-
-  jspb.Message.hiddenES6Property_ = function () {};
-
-  jspb.Message.getFieldNumber_ = function (a, b) {
-    return b - a.arrayIndexOffset_;
-  };
-
-  jspb.Message.initialize = function (a, b, c, d, e, f) {
-    a.wrappers_ = null;
-    b || (b = c ? [c] : []);
-    a.messageId_ = c ? String(c) : void 0;
-    a.arrayIndexOffset_ = 0 === c ? -1 : 0;
-    a.array = b;
-    jspb.Message.initPivotAndExtensionObject_(a, d);
-    a.convertedPrimitiveFields_ = {};
-    jspb.Message.SERIALIZE_EMPTY_TRAILING_FIELDS || (a.repeatedFields = e);
-    if (e) for (b = 0; b < e.length; b++) {
-      c = e[b], c < a.pivot_ ? (c = jspb.Message.getIndex_(a, c), a.array[c] = a.array[c] || jspb.Message.EMPTY_LIST_SENTINEL_) : (jspb.Message.maybeInitEmptyExtensionObject_(a), a.extensionObject_[c] = a.extensionObject_[c] || jspb.Message.EMPTY_LIST_SENTINEL_);
-    }
-    if (f && f.length) for (b = 0; b < f.length; b++) {
-      jspb.Message.computeOneofCase(a, f[b]);
-    }
-  };
-
-  jspb.Message.EMPTY_LIST_SENTINEL_ = goog.DEBUG && Object.freeze ? Object.freeze([]) : [];
-
-  jspb.Message.isArray_ = function (a) {
-    return jspb.Message.ASSUME_LOCAL_ARRAYS ? a instanceof Array : goog.isArray(a);
-  };
-
-  jspb.Message.isExtensionObject_ = function (a) {
-    return null !== a && "object" == _typeof(a) && !jspb.Message.isArray_(a) && !(jspb.Message.SUPPORTS_UINT8ARRAY_ && a instanceof Uint8Array);
-  };
-
-  jspb.Message.initPivotAndExtensionObject_ = function (a, b) {
-    var c = a.array.length,
-        d = -1;
-
-    if (c && (d = c - 1, c = a.array[d], jspb.Message.isExtensionObject_(c))) {
-      a.pivot_ = jspb.Message.getFieldNumber_(a, d);
-      a.extensionObject_ = c;
-      return;
-    }
-
-    -1 < b ? (a.pivot_ = Math.max(b, jspb.Message.getFieldNumber_(a, d + 1)), a.extensionObject_ = null) : a.pivot_ = Number.MAX_VALUE;
-  };
-
-  jspb.Message.maybeInitEmptyExtensionObject_ = function (a) {
-    var b = jspb.Message.getIndex_(a, a.pivot_);
-    a.array[b] || (a.extensionObject_ = a.array[b] = {});
-  };
-
-  jspb.Message.toObjectList = function (a, b, c) {
-    for (var d = [], e = 0; e < a.length; e++) {
-      d[e] = b.call(a[e], c, a[e]);
-    }
-
-    return d;
-  };
-
-  jspb.Message.toObjectExtension = function (a, b, c, d, e) {
-    for (var f in c) {
-      var g = c[f],
-          h = d.call(a, g);
-
-      if (null != h) {
-        for (var k in g.fieldName) {
-          if (g.fieldName.hasOwnProperty(k)) break;
-        }
-
-        b[k] = g.toObjectFn ? g.isRepeated ? jspb.Message.toObjectList(h, g.toObjectFn, e) : g.toObjectFn(e, h) : h;
-      }
-    }
-  };
-
-  jspb.Message.serializeBinaryExtensions = function (a, b, c, d) {
-    for (var e in c) {
-      var f = c[e],
-          g = f.fieldInfo;
-      if (!f.binaryWriterFn) throw Error("Message extension present that was generated without binary serialization support");
-      var h = d.call(a, g);
-      if (null != h) if (g.isMessageType()) {
-        if (f.binaryMessageSerializeFn) f.binaryWriterFn.call(b, g.fieldIndex, h, f.binaryMessageSerializeFn);else throw Error("Message extension present holding submessage without binary support enabled, and message is being serialized to binary format");
-      } else f.binaryWriterFn.call(b, g.fieldIndex, h);
-    }
-  };
-
-  jspb.Message.readBinaryExtension = function (a, b, c, d, e) {
-    var f = c[b.getFieldNumber()];
-
-    if (f) {
-      c = f.fieldInfo;
-      if (!f.binaryReaderFn) throw Error("Deserializing extension whose generated code does not support binary format");
-
-      if (c.isMessageType()) {
-        var g = new c.ctor();
-        f.binaryReaderFn.call(b, g, f.binaryMessageDeserializeFn);
-      } else g = f.binaryReaderFn.call(b);
-
-      c.isRepeated && !f.isPacked ? (b = d.call(a, c)) ? b.push(g) : e.call(a, c, [g]) : e.call(a, c, g);
-    } else b.skipField();
-  };
-
-  jspb.Message.getField = function (a, b) {
-    if (b < a.pivot_) {
-      b = jspb.Message.getIndex_(a, b);
-      var c = a.array[b];
-      return c === jspb.Message.EMPTY_LIST_SENTINEL_ ? a.array[b] = [] : c;
-    }
-
-    if (a.extensionObject_) return c = a.extensionObject_[b], c === jspb.Message.EMPTY_LIST_SENTINEL_ ? a.extensionObject_[b] = [] : c;
-  };
-
-  jspb.Message.getRepeatedField = function (a, b) {
-    return jspb.Message.getField(a, b);
-  };
-
-  jspb.Message.getOptionalFloatingPointField = function (a, b) {
-    a = jspb.Message.getField(a, b);
-    return null == a ? a : +a;
-  };
-
-  jspb.Message.getBooleanField = function (a, b) {
-    a = jspb.Message.getField(a, b);
-    return null == a ? a : !!a;
-  };
-
-  jspb.Message.getRepeatedFloatingPointField = function (a, b) {
-    var c = jspb.Message.getRepeatedField(a, b);
-    a.convertedPrimitiveFields_ || (a.convertedPrimitiveFields_ = {});
-
-    if (!a.convertedPrimitiveFields_[b]) {
-      for (var d = 0; d < c.length; d++) {
-        c[d] = +c[d];
-      }
-
-      a.convertedPrimitiveFields_[b] = !0;
-    }
-
-    return c;
-  };
-
-  jspb.Message.getRepeatedBooleanField = function (a, b) {
-    var c = jspb.Message.getRepeatedField(a, b);
-    a.convertedPrimitiveFields_ || (a.convertedPrimitiveFields_ = {});
-
-    if (!a.convertedPrimitiveFields_[b]) {
-      for (var d = 0; d < c.length; d++) {
-        c[d] = !!c[d];
-      }
-
-      a.convertedPrimitiveFields_[b] = !0;
-    }
-
-    return c;
-  };
-
-  jspb.Message.bytesAsB64 = function (a) {
-    if (null == a || goog.isString(a)) return a;
-    if (jspb.Message.SUPPORTS_UINT8ARRAY_ && a instanceof Uint8Array) return goog.crypt.base64.encodeByteArray(a);
-    goog.asserts.fail("Cannot coerce to b64 string: " + goog.typeOf(a));
-    return null;
-  };
-
-  jspb.Message.bytesAsU8 = function (a) {
-    if (null == a || a instanceof Uint8Array) return a;
-    if (goog.isString(a)) return goog.crypt.base64.decodeStringToUint8Array(a);
-    goog.asserts.fail("Cannot coerce to Uint8Array: " + goog.typeOf(a));
-    return null;
-  };
-
-  jspb.Message.bytesListAsB64 = function (a) {
-    jspb.Message.assertConsistentTypes_(a);
-    return !a.length || goog.isString(a[0]) ? a : goog.array.map(a, jspb.Message.bytesAsB64);
-  };
-
-  jspb.Message.bytesListAsU8 = function (a) {
-    jspb.Message.assertConsistentTypes_(a);
-    return !a.length || a[0] instanceof Uint8Array ? a : goog.array.map(a, jspb.Message.bytesAsU8);
-  };
-
-  jspb.Message.assertConsistentTypes_ = function (a) {
-    if (goog.DEBUG && a && 1 < a.length) {
-      var b = goog.typeOf(a[0]);
-      goog.array.forEach(a, function (a) {
-        goog.typeOf(a) != b && goog.asserts.fail("Inconsistent type in JSPB repeated field array. Got " + goog.typeOf(a) + " expected " + b);
+    goog.scope = function (a) {
+      if (goog.isInModuleLoader_()) throw Error("goog.scope is not supported within a module.");
+      a.call(goog.global);
+    };
+
+    goog.defineClass = function (a, b) {
+      var c = b.constructor,
+          d = b.statics;
+      c && c != Object.prototype.constructor || (c = function c() {
+        throw Error("cannot instantiate an interface (no constructor defined).");
       });
-    }
-  };
+      c = goog.defineClass.createSealingConstructor_(c, a);
+      a && goog.inherits(c, a);
+      delete b.constructor;
+      delete b.statics;
+      goog.defineClass.applyProperties_(c.prototype, b);
+      null != d && (d instanceof Function ? d(c) : goog.defineClass.applyProperties_(c, d));
+      return c;
+    };
 
-  jspb.Message.getFieldWithDefault = function (a, b, c) {
-    a = jspb.Message.getField(a, b);
-    return null == a ? c : a;
-  };
+    goog.defineClass.SEAL_CLASS_INSTANCES = goog.DEBUG;
 
-  jspb.Message.getBooleanFieldWithDefault = function (a, b, c) {
-    a = jspb.Message.getBooleanField(a, b);
-    return null == a ? c : a;
-  };
+    goog.defineClass.createSealingConstructor_ = function (a, b) {
+      if (!goog.defineClass.SEAL_CLASS_INSTANCES) return a;
 
-  jspb.Message.getFloatingPointFieldWithDefault = function (a, b, c) {
-    a = jspb.Message.getOptionalFloatingPointField(a, b);
-    return null == a ? c : a;
-  };
+      var c = !goog.defineClass.isUnsealable_(b),
+          d = function d() {
+        var b = a.apply(this, arguments) || this;
+        b[goog.UID_PROPERTY_] = b[goog.UID_PROPERTY_];
+        this.constructor === d && c && Object.seal instanceof Function && Object.seal(b);
+        return b;
+      };
 
-  jspb.Message.getFieldProto3 = jspb.Message.getFieldWithDefault;
+      return d;
+    };
 
-  jspb.Message.getMapField = function (a, b, c, d) {
-    a.wrappers_ || (a.wrappers_ = {});
-    if (b in a.wrappers_) return a.wrappers_[b];
-    if (!c) return c = jspb.Message.getField(a, b), c || (c = [], jspb.Message.setField(a, b, c)), a.wrappers_[b] = new jspb.Map(c, d);
-  };
+    goog.defineClass.isUnsealable_ = function (a) {
+      return a && a.prototype && a.prototype[goog.UNSEALABLE_CONSTRUCTOR_PROPERTY_];
+    };
 
-  jspb.Message.setField = function (a, b, c) {
-    b < a.pivot_ ? a.array[jspb.Message.getIndex_(a, b)] = c : (jspb.Message.maybeInitEmptyExtensionObject_(a), a.extensionObject_[b] = c);
-  };
+    goog.defineClass.OBJECT_PROTOTYPE_FIELDS_ = "constructor hasOwnProperty isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf".split(" ");
 
-  jspb.Message.setProto3IntField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, 0);
-  };
-
-  jspb.Message.setProto3FloatField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, 0);
-  };
-
-  jspb.Message.setProto3BooleanField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, !1);
-  };
-
-  jspb.Message.setProto3StringField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, "");
-  };
-
-  jspb.Message.setProto3BytesField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, "");
-  };
-
-  jspb.Message.setProto3EnumField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, 0);
-  };
-
-  jspb.Message.setProto3StringIntField = function (a, b, c) {
-    jspb.Message.setFieldIgnoringDefault_(a, b, c, "0");
-  };
-
-  jspb.Message.setFieldIgnoringDefault_ = function (a, b, c, d) {
-    c !== d ? jspb.Message.setField(a, b, c) : a.array[jspb.Message.getIndex_(a, b)] = null;
-  };
-
-  jspb.Message.addToRepeatedField = function (a, b, c, d) {
-    a = jspb.Message.getRepeatedField(a, b);
-    void 0 != d ? a.splice(d, 0, c) : a.push(c);
-  };
-
-  jspb.Message.setOneofField = function (a, b, c, d) {
-    (c = jspb.Message.computeOneofCase(a, c)) && c !== b && void 0 !== d && (a.wrappers_ && c in a.wrappers_ && (a.wrappers_[c] = void 0), jspb.Message.setField(a, c, void 0));
-    jspb.Message.setField(a, b, d);
-  };
-
-  jspb.Message.computeOneofCase = function (a, b) {
-    for (var c, d, e = 0; e < b.length; e++) {
-      var f = b[e],
-          g = jspb.Message.getField(a, f);
-      null != g && (c = f, d = g, jspb.Message.setField(a, f, void 0));
-    }
-
-    return c ? (jspb.Message.setField(a, c, d), c) : 0;
-  };
-
-  jspb.Message.getWrapperField = function (a, b, c, d) {
-    a.wrappers_ || (a.wrappers_ = {});
-
-    if (!a.wrappers_[c]) {
-      var e = jspb.Message.getField(a, c);
-      if (d || e) a.wrappers_[c] = new b(e);
-    }
-
-    return a.wrappers_[c];
-  };
-
-  jspb.Message.getRepeatedWrapperField = function (a, b, c) {
-    jspb.Message.wrapRepeatedField_(a, b, c);
-    b = a.wrappers_[c];
-    b == jspb.Message.EMPTY_LIST_SENTINEL_ && (b = a.wrappers_[c] = []);
-    return b;
-  };
-
-  jspb.Message.wrapRepeatedField_ = function (a, b, c) {
-    a.wrappers_ || (a.wrappers_ = {});
-
-    if (!a.wrappers_[c]) {
-      for (var d = jspb.Message.getRepeatedField(a, c), e = [], f = 0; f < d.length; f++) {
-        e[f] = new b(d[f]);
+    goog.defineClass.applyProperties_ = function (a, b) {
+      for (var c in b) {
+        Object.prototype.hasOwnProperty.call(b, c) && (a[c] = b[c]);
       }
 
-      a.wrappers_[c] = e;
-    }
-  };
+      for (var d = 0; d < goog.defineClass.OBJECT_PROTOTYPE_FIELDS_.length; d++) {
+        c = goog.defineClass.OBJECT_PROTOTYPE_FIELDS_[d], Object.prototype.hasOwnProperty.call(b, c) && (a[c] = b[c]);
+      }
+    };
 
-  jspb.Message.setWrapperField = function (a, b, c) {
-    a.wrappers_ || (a.wrappers_ = {});
-    var d = c ? c.toArray() : c;
-    a.wrappers_[b] = c;
-    jspb.Message.setField(a, b, d);
-  };
+    goog.tagUnsealableClass = function (a) {
+    };
 
-  jspb.Message.setOneofWrapperField = function (a, b, c, d) {
-    a.wrappers_ || (a.wrappers_ = {});
-    var e = d ? d.toArray() : d;
-    a.wrappers_[b] = d;
-    jspb.Message.setOneofField(a, b, c, e);
-  };
+    goog.UNSEALABLE_CONSTRUCTOR_PROPERTY_ = "goog_defineClass_legacy_unsealable";
+    goog.TRUSTED_TYPES_POLICY_NAME = "";
 
-  jspb.Message.setRepeatedWrapperField = function (a, b, c) {
-    a.wrappers_ || (a.wrappers_ = {});
-    c = c || [];
+    goog.identity_ = function (a) {
+      return a;
+    };
 
-    for (var d = [], e = 0; e < c.length; e++) {
-      d[e] = c[e].toArray();
-    }
+    goog.createTrustedTypesPolicy = function (a) {
+      var b = null;
+      if ("undefined" === typeof TrustedTypes || !TrustedTypes.createPolicy) return b;
 
-    a.wrappers_[b] = c;
-    jspb.Message.setField(a, b, d);
-  };
+      try {
+        b = TrustedTypes.createPolicy(a, {
+          createHTML: goog.identity_,
+          createScript: goog.identity_,
+          createScriptURL: goog.identity_,
+          createURL: goog.identity_
+        });
+      } catch (c) {
+        goog.logToConsole_(c.message);
+      }
 
-  jspb.Message.addToRepeatedWrapperField = function (a, b, c, d, e) {
-    jspb.Message.wrapRepeatedField_(a, d, b);
-    var f = a.wrappers_[b];
-    f || (f = a.wrappers_[b] = []);
-    c = c ? c : new d();
-    a = jspb.Message.getRepeatedField(a, b);
-    void 0 != e ? (f.splice(e, 0, c), a.splice(e, 0, c.toArray())) : (f.push(c), a.push(c.toArray()));
-    return c;
-  };
+      return b;
+    };
 
-  jspb.Message.toMap = function (a, b, c, d) {
-    for (var e = {}, f = 0; f < a.length; f++) {
-      e[b.call(a[f])] = c ? c.call(a[f], d, a[f]) : a[f];
-    }
+    goog.TRUSTED_TYPES_POLICY_ = goog.TRUSTED_TYPES_POLICY_NAME ? goog.createTrustedTypesPolicy(goog.TRUSTED_TYPES_POLICY_NAME + "#base") : null;
+    goog.object = {};
 
-    return e;
-  };
+    goog.object.is = function (a, b) {
+      return a === b ? 0 !== a || 1 / a === 1 / b : a !== a && b !== b;
+    };
 
-  jspb.Message.prototype.syncMapFields_ = function () {
-    if (this.wrappers_) for (var a in this.wrappers_) {
-      var b = this.wrappers_[a];
-      if (goog.isArray(b)) for (var c = 0; c < b.length; c++) {
-        b[c] && b[c].toArray();
-      } else b && b.toArray();
-    }
-  };
+    goog.object.forEach = function (a, b, c) {
+      for (var d in a) {
+        b.call(c, a[d], d, a);
+      }
+    };
 
-  jspb.Message.prototype.toArray = function () {
-    this.syncMapFields_();
-    return this.array;
-  };
+    goog.object.filter = function (a, b, c) {
+      var d = {},
+          e;
 
-  jspb.Message.GENERATE_TO_STRING && (jspb.Message.prototype.toString = function () {
-    this.syncMapFields_();
-    return this.array.toString();
-  });
+      for (e in a) {
+        b.call(c, a[e], e, a) && (d[e] = a[e]);
+      }
 
-  jspb.Message.prototype.getExtension = function (a) {
-    if (this.extensionObject_) {
-      this.wrappers_ || (this.wrappers_ = {});
-      var b = a.fieldIndex;
+      return d;
+    };
 
-      if (a.isRepeated) {
-        if (a.isMessageType()) return this.wrappers_[b] || (this.wrappers_[b] = goog.array.map(this.extensionObject_[b] || [], function (b) {
-          return new a.ctor(b);
-        })), this.wrappers_[b];
-      } else if (a.isMessageType()) return !this.wrappers_[b] && this.extensionObject_[b] && (this.wrappers_[b] = new a.ctor(this.extensionObject_[b])), this.wrappers_[b];
+    goog.object.map = function (a, b, c) {
+      var d = {},
+          e;
 
-      return this.extensionObject_[b];
-    }
-  };
+      for (e in a) {
+        d[e] = b.call(c, a[e], e, a);
+      }
 
-  jspb.Message.prototype.setExtension = function (a, b) {
-    this.wrappers_ || (this.wrappers_ = {});
-    jspb.Message.maybeInitEmptyExtensionObject_(this);
-    var c = a.fieldIndex;
-    a.isRepeated ? (b = b || [], a.isMessageType() ? (this.wrappers_[c] = b, this.extensionObject_[c] = goog.array.map(b, function (a) {
-      return a.toArray();
-    })) : this.extensionObject_[c] = b) : a.isMessageType() ? (this.wrappers_[c] = b, this.extensionObject_[c] = b ? b.toArray() : b) : this.extensionObject_[c] = b;
-    return this;
-  };
+      return d;
+    };
 
-  jspb.Message.difference = function (a, b) {
-    if (!(a instanceof b.constructor)) throw Error("Messages have different types.");
-    var c = a.toArray();
-    b = b.toArray();
-    var d = [],
-        e = 0,
-        f = c.length > b.length ? c.length : b.length;
-    a.getJsPbMessageId() && (d[0] = a.getJsPbMessageId(), e = 1);
+    goog.object.some = function (a, b, c) {
+      for (var d in a) {
+        if (b.call(c, a[d], d, a)) return !0;
+      }
 
-    for (; e < f; e++) {
-      jspb.Message.compareFields(c[e], b[e]) || (d[e] = b[e]);
-    }
+      return !1;
+    };
 
-    return new a.constructor(d);
-  };
-
-  jspb.Message.equals = function (a, b) {
-    return a == b || !(!a || !b) && a instanceof b.constructor && jspb.Message.compareFields(a.toArray(), b.toArray());
-  };
-
-  jspb.Message.compareExtensions = function (a, b) {
-    a = a || {};
-    b = b || {};
-    var c = {},
-        d;
-
-    for (d in a) {
-      c[d] = 0;
-    }
-
-    for (d in b) {
-      c[d] = 0;
-    }
-
-    for (d in c) {
-      if (!jspb.Message.compareFields(a[d], b[d])) return !1;
-    }
-
-    return !0;
-  };
-
-  jspb.Message.compareFields = function (a, b) {
-    if (a == b) return !0;
-    if (!goog.isObject(a) || !goog.isObject(b)) return goog.isNumber(a) && isNaN(a) || goog.isNumber(b) && isNaN(b) ? String(a) == String(b) : !1;
-    if (a.constructor != b.constructor) return !1;
-
-    if (jspb.Message.SUPPORTS_UINT8ARRAY_ && a.constructor === Uint8Array) {
-      if (a.length != b.length) return !1;
-
-      for (var c = 0; c < a.length; c++) {
-        if (a[c] != b[c]) return !1;
+    goog.object.every = function (a, b, c) {
+      for (var d in a) {
+        if (!b.call(c, a[d], d, a)) return !1;
       }
 
       return !0;
-    }
+    };
 
-    if (a.constructor === Array) {
-      var d = void 0,
-          e = void 0,
-          f = Math.max(a.length, b.length);
+    goog.object.getCount = function (a) {
+      var b = 0,
+          c;
 
-      for (c = 0; c < f; c++) {
-        var g = a[c],
-            h = b[c];
-        g && g.constructor == Object && (goog.asserts.assert(void 0 === d), goog.asserts.assert(c === a.length - 1), d = g, g = void 0);
-        h && h.constructor == Object && (goog.asserts.assert(void 0 === e), goog.asserts.assert(c === b.length - 1), e = h, h = void 0);
-        if (!jspb.Message.compareFields(g, h)) return !1;
-      }
-
-      return d || e ? (d = d || {}, e = e || {}, jspb.Message.compareExtensions(d, e)) : !0;
-    }
-
-    if (a.constructor === Object) return jspb.Message.compareExtensions(a, b);
-    throw Error("Invalid type in JSPB array");
-  };
-
-  jspb.Message.prototype.cloneMessage = function () {
-    return jspb.Message.cloneMessage(this);
-  };
-
-  jspb.Message.prototype.clone = function () {
-    return jspb.Message.cloneMessage(this);
-  };
-
-  jspb.Message.clone = function (a) {
-    return jspb.Message.cloneMessage(a);
-  };
-
-  jspb.Message.cloneMessage = function (a) {
-    return new a.constructor(jspb.Message.clone_(a.toArray()));
-  };
-
-  jspb.Message.copyInto = function (a, b) {
-    goog.asserts.assertInstanceof(a, jspb.Message);
-    goog.asserts.assertInstanceof(b, jspb.Message);
-    goog.asserts.assert(a.constructor == b.constructor, "Copy source and target message should have the same type.");
-    a = jspb.Message.clone(a);
-
-    for (var c = b.toArray(), d = a.toArray(), e = c.length = 0; e < d.length; e++) {
-      c[e] = d[e];
-    }
-
-    b.wrappers_ = a.wrappers_;
-    b.extensionObject_ = a.extensionObject_;
-  };
-
-  jspb.Message.clone_ = function (a) {
-    if (goog.isArray(a)) {
-      for (var b = Array(a.length), c = 0; c < a.length; c++) {
-        var d = a[c];
-        null != d && (b[c] = "object" == _typeof(d) ? jspb.Message.clone_(goog.asserts.assert(d)) : d);
+      for (c in a) {
+        b++;
       }
 
       return b;
-    }
+    };
 
-    if (jspb.Message.SUPPORTS_UINT8ARRAY_ && a instanceof Uint8Array) return new Uint8Array(a);
-    b = {};
+    goog.object.getAnyKey = function (a) {
+      for (var b in a) {
+        return b;
+      }
+    };
 
-    for (c in a) {
-      d = a[c], null != d && (b[c] = "object" == _typeof(d) ? jspb.Message.clone_(goog.asserts.assert(d)) : d);
-    }
+    goog.object.getAnyValue = function (a) {
+      for (var b in a) {
+        return a[b];
+      }
+    };
 
-    return b;
-  };
+    goog.object.contains = function (a, b) {
+      return goog.object.containsValue(a, b);
+    };
 
-  jspb.Message.registerMessageType = function (a, b) {
-    jspb.Message.registry_[a] = b;
-    b.messageId = a;
-  };
+    goog.object.getValues = function (a) {
+      var b = [],
+          c = 0,
+          d;
 
-  jspb.Message.registry_ = {};
-  jspb.Message.messageSetExtensions = {};
-  jspb.Message.messageSetExtensionsBinary = {};
-  jspb.arith = {};
-
-  jspb.arith.UInt64 = function (a, b) {
-    this.lo = a;
-    this.hi = b;
-  };
-
-  jspb.arith.UInt64.prototype.cmp = function (a) {
-    return this.hi < a.hi || this.hi == a.hi && this.lo < a.lo ? -1 : this.hi == a.hi && this.lo == a.lo ? 0 : 1;
-  };
-
-  jspb.arith.UInt64.prototype.rightShift = function () {
-    return new jspb.arith.UInt64((this.lo >>> 1 | (this.hi & 1) << 31) >>> 0, this.hi >>> 1 >>> 0);
-  };
-
-  jspb.arith.UInt64.prototype.leftShift = function () {
-    return new jspb.arith.UInt64(this.lo << 1 >>> 0, (this.hi << 1 | this.lo >>> 31) >>> 0);
-  };
-
-  jspb.arith.UInt64.prototype.msb = function () {
-    return !!(this.hi & 2147483648);
-  };
-
-  jspb.arith.UInt64.prototype.lsb = function () {
-    return !!(this.lo & 1);
-  };
-
-  jspb.arith.UInt64.prototype.zero = function () {
-    return 0 == this.lo && 0 == this.hi;
-  };
-
-  jspb.arith.UInt64.prototype.add = function (a) {
-    return new jspb.arith.UInt64((this.lo + a.lo & 4294967295) >>> 0 >>> 0, ((this.hi + a.hi & 4294967295) >>> 0) + (4294967296 <= this.lo + a.lo ? 1 : 0) >>> 0);
-  };
-
-  jspb.arith.UInt64.prototype.sub = function (a) {
-    return new jspb.arith.UInt64((this.lo - a.lo & 4294967295) >>> 0 >>> 0, ((this.hi - a.hi & 4294967295) >>> 0) - (0 > this.lo - a.lo ? 1 : 0) >>> 0);
-  };
-
-  jspb.arith.UInt64.mul32x32 = function (a, b) {
-    var c = a & 65535;
-    a >>>= 16;
-    var d = b & 65535,
-        e = b >>> 16;
-    b = c * d + 65536 * (c * e & 65535) + 65536 * (a * d & 65535);
-
-    for (c = a * e + (c * e >>> 16) + (a * d >>> 16); 4294967296 <= b;) {
-      b -= 4294967296, c += 1;
-    }
-
-    return new jspb.arith.UInt64(b >>> 0, c >>> 0);
-  };
-
-  jspb.arith.UInt64.prototype.mul = function (a) {
-    var b = jspb.arith.UInt64.mul32x32(this.lo, a);
-    a = jspb.arith.UInt64.mul32x32(this.hi, a);
-    a.hi = a.lo;
-    a.lo = 0;
-    return b.add(a);
-  };
-
-  jspb.arith.UInt64.prototype.div = function (a) {
-    if (0 == a) return [];
-    var b = new jspb.arith.UInt64(0, 0),
-        c = new jspb.arith.UInt64(this.lo, this.hi);
-    a = new jspb.arith.UInt64(a, 0);
-
-    for (var d = new jspb.arith.UInt64(1, 0); !a.msb();) {
-      a = a.leftShift(), d = d.leftShift();
-    }
-
-    for (; !d.zero();) {
-      0 >= a.cmp(c) && (b = b.add(d), c = c.sub(a)), a = a.rightShift(), d = d.rightShift();
-    }
-
-    return [b, c];
-  };
-
-  jspb.arith.UInt64.prototype.toString = function () {
-    for (var a = "", b = this; !b.zero();) {
-      b = b.div(10);
-      var c = b[0];
-      a = b[1].lo + a;
-      b = c;
-    }
-
-    "" == a && (a = "0");
-    return a;
-  };
-
-  jspb.arith.UInt64.fromString = function (a) {
-    for (var b = new jspb.arith.UInt64(0, 0), c = new jspb.arith.UInt64(0, 0), d = 0; d < a.length; d++) {
-      if ("0" > a[d] || "9" < a[d]) return null;
-      var e = parseInt(a[d], 10);
-      c.lo = e;
-      b = b.mul(10).add(c);
-    }
-
-    return b;
-  };
-
-  jspb.arith.UInt64.prototype.clone = function () {
-    return new jspb.arith.UInt64(this.lo, this.hi);
-  };
-
-  jspb.arith.Int64 = function (a, b) {
-    this.lo = a;
-    this.hi = b;
-  };
-
-  jspb.arith.Int64.prototype.add = function (a) {
-    return new jspb.arith.Int64((this.lo + a.lo & 4294967295) >>> 0 >>> 0, ((this.hi + a.hi & 4294967295) >>> 0) + (4294967296 <= this.lo + a.lo ? 1 : 0) >>> 0);
-  };
-
-  jspb.arith.Int64.prototype.sub = function (a) {
-    return new jspb.arith.Int64((this.lo - a.lo & 4294967295) >>> 0 >>> 0, ((this.hi - a.hi & 4294967295) >>> 0) - (0 > this.lo - a.lo ? 1 : 0) >>> 0);
-  };
-
-  jspb.arith.Int64.prototype.clone = function () {
-    return new jspb.arith.Int64(this.lo, this.hi);
-  };
-
-  jspb.arith.Int64.prototype.toString = function () {
-    var a = 0 != (this.hi & 2147483648),
-        b = new jspb.arith.UInt64(this.lo, this.hi);
-    a && (b = new jspb.arith.UInt64(0, 0).sub(b));
-    return (a ? "-" : "") + b.toString();
-  };
-
-  jspb.arith.Int64.fromString = function (a) {
-    var b = 0 < a.length && "-" == a[0];
-    b && (a = a.substring(1));
-    a = jspb.arith.UInt64.fromString(a);
-    if (null === a) return null;
-    b && (a = new jspb.arith.UInt64(0, 0).sub(a));
-    return new jspb.arith.Int64(a.lo, a.hi);
-  };
-
-  jspb.BinaryEncoder = function () {
-    this.buffer_ = [];
-  };
-
-  jspb.BinaryEncoder.prototype.length = function () {
-    return this.buffer_.length;
-  };
-
-  jspb.BinaryEncoder.prototype.end = function () {
-    var a = this.buffer_;
-    this.buffer_ = [];
-    return a;
-  };
-
-  jspb.BinaryEncoder.prototype.writeSplitVarint64 = function (a, b) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(b == Math.floor(b));
-    goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32);
-
-    for (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32); 0 < b || 127 < a;) {
-      this.buffer_.push(a & 127 | 128), a = (a >>> 7 | b << 25) >>> 0, b >>>= 7;
-    }
-
-    this.buffer_.push(a);
-  };
-
-  jspb.BinaryEncoder.prototype.writeSplitFixed64 = function (a, b) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(b == Math.floor(b));
-    goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32);
-    goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32);
-    this.writeUint32(a);
-    this.writeUint32(b);
-  };
-
-  jspb.BinaryEncoder.prototype.writeUnsignedVarint32 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-
-    for (goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32); 127 < a;) {
-      this.buffer_.push(a & 127 | 128), a >>>= 7;
-    }
-
-    this.buffer_.push(a);
-  };
-
-  jspb.BinaryEncoder.prototype.writeSignedVarint32 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
-    if (0 <= a) this.writeUnsignedVarint32(a);else {
-      for (var b = 0; 9 > b; b++) {
-        this.buffer_.push(a & 127 | 128), a >>= 7;
+      for (d in a) {
+        b[c++] = a[d];
       }
 
-      this.buffer_.push(1);
-    }
-  };
-
-  jspb.BinaryEncoder.prototype.writeUnsignedVarint64 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_64);
-    jspb.utils.splitInt64(a);
-    this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeSignedVarint64 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_63 && a < jspb.BinaryConstants.TWO_TO_63);
-    jspb.utils.splitInt64(a);
-    this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeZigzagVarint32 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
-    this.writeUnsignedVarint32((a << 1 ^ a >> 31) >>> 0);
-  };
-
-  jspb.BinaryEncoder.prototype.writeZigzagVarint64 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_63 && a < jspb.BinaryConstants.TWO_TO_63);
-    jspb.utils.splitZigzag64(a);
-    this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeZigzagVarint64String = function (a) {
-    this.writeZigzagVarint64(parseInt(a, 10));
-  };
-
-  jspb.BinaryEncoder.prototype.writeUint8 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(0 <= a && 256 > a);
-    this.buffer_.push(a >>> 0 & 255);
-  };
-
-  jspb.BinaryEncoder.prototype.writeUint16 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(0 <= a && 65536 > a);
-    this.buffer_.push(a >>> 0 & 255);
-    this.buffer_.push(a >>> 8 & 255);
-  };
-
-  jspb.BinaryEncoder.prototype.writeUint32 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32);
-    this.buffer_.push(a >>> 0 & 255);
-    this.buffer_.push(a >>> 8 & 255);
-    this.buffer_.push(a >>> 16 & 255);
-    this.buffer_.push(a >>> 24 & 255);
-  };
-
-  jspb.BinaryEncoder.prototype.writeUint64 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_64);
-    jspb.utils.splitUint64(a);
-    this.writeUint32(jspb.utils.split64Low);
-    this.writeUint32(jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeInt8 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(-128 <= a && 128 > a);
-    this.buffer_.push(a >>> 0 & 255);
-  };
-
-  jspb.BinaryEncoder.prototype.writeInt16 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(-32768 <= a && 32768 > a);
-    this.buffer_.push(a >>> 0 & 255);
-    this.buffer_.push(a >>> 8 & 255);
-  };
-
-  jspb.BinaryEncoder.prototype.writeInt32 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
-    this.buffer_.push(a >>> 0 & 255);
-    this.buffer_.push(a >>> 8 & 255);
-    this.buffer_.push(a >>> 16 & 255);
-    this.buffer_.push(a >>> 24 & 255);
-  };
-
-  jspb.BinaryEncoder.prototype.writeInt64 = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_63 && a < jspb.BinaryConstants.TWO_TO_63);
-    jspb.utils.splitInt64(a);
-    this.writeSplitFixed64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeInt64String = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(+a >= -jspb.BinaryConstants.TWO_TO_63 && +a < jspb.BinaryConstants.TWO_TO_63);
-    jspb.utils.splitHash64(jspb.utils.decimalStringToHash64(a));
-    this.writeSplitFixed64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeFloat = function (a) {
-    goog.asserts.assert(a >= -jspb.BinaryConstants.FLOAT32_MAX && a <= jspb.BinaryConstants.FLOAT32_MAX);
-    jspb.utils.splitFloat32(a);
-    this.writeUint32(jspb.utils.split64Low);
-  };
-
-  jspb.BinaryEncoder.prototype.writeDouble = function (a) {
-    goog.asserts.assert(a >= -jspb.BinaryConstants.FLOAT64_MAX && a <= jspb.BinaryConstants.FLOAT64_MAX);
-    jspb.utils.splitFloat64(a);
-    this.writeUint32(jspb.utils.split64Low);
-    this.writeUint32(jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeBool = function (a) {
-    goog.asserts.assert(goog.isBoolean(a) || goog.isNumber(a));
-    this.buffer_.push(a ? 1 : 0);
-  };
-
-  jspb.BinaryEncoder.prototype.writeEnum = function (a) {
-    goog.asserts.assert(a == Math.floor(a));
-    goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
-    this.writeSignedVarint32(a);
-  };
-
-  jspb.BinaryEncoder.prototype.writeBytes = function (a) {
-    this.buffer_.push.apply(this.buffer_, a);
-  };
-
-  jspb.BinaryEncoder.prototype.writeVarintHash64 = function (a) {
-    jspb.utils.splitHash64(a);
-    this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeFixedHash64 = function (a) {
-    jspb.utils.splitHash64(a);
-    this.writeUint32(jspb.utils.split64Low);
-    this.writeUint32(jspb.utils.split64High);
-  };
-
-  jspb.BinaryEncoder.prototype.writeString = function (a) {
-    for (var b = this.buffer_.length, c = 0; c < a.length; c++) {
-      var d = a.charCodeAt(c);
-      if (128 > d) this.buffer_.push(d);else if (2048 > d) this.buffer_.push(d >> 6 | 192), this.buffer_.push(d & 63 | 128);else if (65536 > d) if (55296 <= d && 56319 >= d && c + 1 < a.length) {
-        var e = a.charCodeAt(c + 1);
-        56320 <= e && 57343 >= e && (d = 1024 * (d - 55296) + e - 56320 + 65536, this.buffer_.push(d >> 18 | 240), this.buffer_.push(d >> 12 & 63 | 128), this.buffer_.push(d >> 6 & 63 | 128), this.buffer_.push(d & 63 | 128), c++);
-      } else this.buffer_.push(d >> 12 | 224), this.buffer_.push(d >> 6 & 63 | 128), this.buffer_.push(d & 63 | 128);
-    }
-
-    return this.buffer_.length - b;
-  };
-
-  jspb.BinaryWriter = function () {
-    this.blocks_ = [];
-    this.totalLength_ = 0;
-    this.encoder_ = new jspb.BinaryEncoder();
-    this.bookmarks_ = [];
-  };
-
-  jspb.BinaryWriter.prototype.appendUint8Array_ = function (a) {
-    var b = this.encoder_.end();
-    this.blocks_.push(b);
-    this.blocks_.push(a);
-    this.totalLength_ += b.length + a.length;
-  };
-
-  jspb.BinaryWriter.prototype.beginDelimited_ = function (a) {
-    this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED);
-    a = this.encoder_.end();
-    this.blocks_.push(a);
-    this.totalLength_ += a.length;
-    a.push(this.totalLength_);
-    return a;
-  };
-
-  jspb.BinaryWriter.prototype.endDelimited_ = function (a) {
-    var b = a.pop();
-    b = this.totalLength_ + this.encoder_.length() - b;
-
-    for (goog.asserts.assert(0 <= b); 127 < b;) {
-      a.push(b & 127 | 128), b >>>= 7, this.totalLength_++;
-    }
-
-    a.push(b);
-    this.totalLength_++;
-  };
-
-  jspb.BinaryWriter.prototype.writeSerializedMessage = function (a, b, c) {
-    this.appendUint8Array_(a.subarray(b, c));
-  };
-
-  jspb.BinaryWriter.prototype.maybeWriteSerializedMessage = function (a, b, c) {
-    null != a && null != b && null != c && this.writeSerializedMessage(a, b, c);
-  };
-
-  jspb.BinaryWriter.prototype.reset = function () {
-    this.blocks_ = [];
-    this.encoder_.end();
-    this.totalLength_ = 0;
-    this.bookmarks_ = [];
-  };
-
-  jspb.BinaryWriter.prototype.getResultBuffer = function () {
-    goog.asserts.assert(0 == this.bookmarks_.length);
-
-    for (var a = new Uint8Array(this.totalLength_ + this.encoder_.length()), b = this.blocks_, c = b.length, d = 0, e = 0; e < c; e++) {
-      var f = b[e];
-      a.set(f, d);
-      d += f.length;
-    }
-
-    b = this.encoder_.end();
-    a.set(b, d);
-    d += b.length;
-    goog.asserts.assert(d == a.length);
-    this.blocks_ = [a];
-    return a;
-  };
-
-  jspb.BinaryWriter.prototype.getResultBase64String = function (a) {
-    return goog.crypt.base64.encodeByteArray(this.getResultBuffer(), a);
-  };
-
-  jspb.BinaryWriter.prototype.beginSubMessage = function (a) {
-    this.bookmarks_.push(this.beginDelimited_(a));
-  };
-
-  jspb.BinaryWriter.prototype.endSubMessage = function () {
-    goog.asserts.assert(0 <= this.bookmarks_.length);
-    this.endDelimited_(this.bookmarks_.pop());
-  };
-
-  jspb.BinaryWriter.prototype.writeFieldHeader_ = function (a, b) {
-    goog.asserts.assert(1 <= a && a == Math.floor(a));
-    this.encoder_.writeUnsignedVarint32(8 * a + b);
-  };
-
-  jspb.BinaryWriter.prototype.writeAny = function (a, b, c) {
-    var d = jspb.BinaryConstants.FieldType;
-
-    switch (a) {
-      case d.DOUBLE:
-        this.writeDouble(b, c);
-        break;
-
-      case d.FLOAT:
-        this.writeFloat(b, c);
-        break;
-
-      case d.INT64:
-        this.writeInt64(b, c);
-        break;
-
-      case d.UINT64:
-        this.writeUint64(b, c);
-        break;
-
-      case d.INT32:
-        this.writeInt32(b, c);
-        break;
-
-      case d.FIXED64:
-        this.writeFixed64(b, c);
-        break;
-
-      case d.FIXED32:
-        this.writeFixed32(b, c);
-        break;
-
-      case d.BOOL:
-        this.writeBool(b, c);
-        break;
-
-      case d.STRING:
-        this.writeString(b, c);
-        break;
-
-      case d.GROUP:
-        goog.asserts.fail("Group field type not supported in writeAny()");
-        break;
-
-      case d.MESSAGE:
-        goog.asserts.fail("Message field type not supported in writeAny()");
-        break;
-
-      case d.BYTES:
-        this.writeBytes(b, c);
-        break;
-
-      case d.UINT32:
-        this.writeUint32(b, c);
-        break;
-
-      case d.ENUM:
-        this.writeEnum(b, c);
-        break;
-
-      case d.SFIXED32:
-        this.writeSfixed32(b, c);
-        break;
-
-      case d.SFIXED64:
-        this.writeSfixed64(b, c);
-        break;
-
-      case d.SINT32:
-        this.writeSint32(b, c);
-        break;
-
-      case d.SINT64:
-        this.writeSint64(b, c);
-        break;
-
-      case d.FHASH64:
-        this.writeFixedHash64(b, c);
-        break;
-
-      case d.VHASH64:
-        this.writeVarintHash64(b, c);
-        break;
-
-      default:
-        goog.asserts.fail("Invalid field type in writeAny()");
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeUnsignedVarint32_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeUnsignedVarint32(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeSignedVarint32_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint32(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeUnsignedVarint64_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeUnsignedVarint64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeSignedVarint64_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeZigzagVarint32_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarint32(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeZigzagVarint64_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarint64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeZigzagVarint64String_ = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarint64String(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeInt32 = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeSignedVarint32_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeInt32String = function (a, b) {
-    null != b && (b = parseInt(b, 10), goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeSignedVarint32_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeInt64 = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_63 && b < jspb.BinaryConstants.TWO_TO_63), this.writeSignedVarint64_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeInt64String = function (a, b) {
-    null != b && (b = jspb.arith.Int64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSplitVarint64(b.lo, b.hi));
-  };
-
-  jspb.BinaryWriter.prototype.writeUint32 = function (a, b) {
-    null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32), this.writeUnsignedVarint32_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeUint32String = function (a, b) {
-    null != b && (b = parseInt(b, 10), goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32), this.writeUnsignedVarint32_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeUint64 = function (a, b) {
-    null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_64), this.writeUnsignedVarint64_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeUint64String = function (a, b) {
-    null != b && (b = jspb.arith.UInt64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSplitVarint64(b.lo, b.hi));
-  };
-
-  jspb.BinaryWriter.prototype.writeSint32 = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeZigzagVarint32_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeSint64 = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_63 && b < jspb.BinaryConstants.TWO_TO_63), this.writeZigzagVarint64_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeSint64String = function (a, b) {
-    null != b && (goog.asserts.assert(+b >= -jspb.BinaryConstants.TWO_TO_63 && +b < jspb.BinaryConstants.TWO_TO_63), this.writeZigzagVarint64String_(a, b));
-  };
-
-  jspb.BinaryWriter.prototype.writeFixed32 = function (a, b) {
-    null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED32), this.encoder_.writeUint32(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeFixed64 = function (a, b) {
-    null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_64), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeUint64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeFixed64String = function (a, b) {
-    null != b && (b = jspb.arith.UInt64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeSplitFixed64(b.lo, b.hi));
-  };
-
-  jspb.BinaryWriter.prototype.writeSfixed32 = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED32), this.encoder_.writeInt32(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeSfixed64 = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_63 && b < jspb.BinaryConstants.TWO_TO_63), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeInt64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeSfixed64String = function (a, b) {
-    null != b && (b = jspb.arith.Int64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeSplitFixed64(b.lo, b.hi));
-  };
-
-  jspb.BinaryWriter.prototype.writeFloat = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED32), this.encoder_.writeFloat(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeDouble = function (a, b) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeDouble(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeBool = function (a, b) {
-    null != b && (goog.asserts.assert(goog.isBoolean(b) || goog.isNumber(b)), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeBool(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeEnum = function (a, b) {
-    null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint32(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeString = function (a, b) {
-    null != b && (a = this.beginDelimited_(a), this.encoder_.writeString(b), this.endDelimited_(a));
-  };
-
-  jspb.BinaryWriter.prototype.writeBytes = function (a, b) {
-    null != b && (b = jspb.utils.byteSourceToUint8Array(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(b.length), this.appendUint8Array_(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeMessage = function (a, b, c) {
-    null != b && (a = this.beginDelimited_(a), c(b, this), this.endDelimited_(a));
-  };
-
-  jspb.BinaryWriter.prototype.writeMessageSet = function (a, b, c) {
-    null != b && (this.writeFieldHeader_(1, jspb.BinaryConstants.WireType.START_GROUP), this.writeFieldHeader_(2, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint32(a), a = this.beginDelimited_(3), c(b, this), this.endDelimited_(a), this.writeFieldHeader_(1, jspb.BinaryConstants.WireType.END_GROUP));
-  };
-
-  jspb.BinaryWriter.prototype.writeGroup = function (a, b, c) {
-    null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.START_GROUP), c(b, this), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.END_GROUP));
-  };
-
-  jspb.BinaryWriter.prototype.writeFixedHash64 = function (a, b) {
-    null != b && (goog.asserts.assert(8 == b.length), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeFixedHash64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeVarintHash64 = function (a, b) {
-    null != b && (goog.asserts.assert(8 == b.length), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeVarintHash64(b));
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedInt32 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeSignedVarint32_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedInt32String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeInt32String(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedInt64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeSignedVarint64_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedInt64String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeInt64String(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedUint32 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeUnsignedVarint32_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedUint32String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeUint32String(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedUint64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeUnsignedVarint64_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedUint64String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeUint64String(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedSint32 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeZigzagVarint32_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedSint64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeZigzagVarint64_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedSint64String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeZigzagVarint64String_(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedFixed32 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeFixed32(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedFixed64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeFixed64(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedFixed64String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeFixed64String(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedSfixed32 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeSfixed32(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedSfixed64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeSfixed64(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedSfixed64String = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeSfixed64String(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedFloat = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeFloat(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedDouble = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeDouble(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedBool = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeBool(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedEnum = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeEnum(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedString = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeString(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedBytes = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeBytes(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedMessage = function (a, b, c) {
-    if (null != b) for (var d = 0; d < b.length; d++) {
-      var e = this.beginDelimited_(a);
-      c(b[d], this);
-      this.endDelimited_(e);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedGroup = function (a, b, c) {
-    if (null != b) for (var d = 0; d < b.length; d++) {
-      this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.START_GROUP), c(b[d], this), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.END_GROUP);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedFixedHash64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeFixedHash64(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writeRepeatedVarintHash64 = function (a, b) {
-    if (null != b) for (var c = 0; c < b.length; c++) {
-      this.writeVarintHash64(a, b[c]);
-    }
-  };
-
-  jspb.BinaryWriter.prototype.writePackedInt32 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+      return b;
+    };
+
+    goog.object.getKeys = function (a) {
+      var b = [],
+          c = 0,
+          d;
+
+      for (d in a) {
+        b[c++] = d;
+      }
+
+      return b;
+    };
+
+    goog.object.getValueByKeys = function (a, b) {
+      var c = goog.isArrayLike(b),
+          d = c ? b : arguments;
+
+      for (c = c ? 0 : 1; c < d.length; c++) {
+        if (null == a) return;
+        a = a[d[c]];
+      }
+
+      return a;
+    };
+
+    goog.object.containsKey = function (a, b) {
+      return null !== a && b in a;
+    };
+
+    goog.object.containsValue = function (a, b) {
+      for (var c in a) {
+        if (a[c] == b) return !0;
+      }
+
+      return !1;
+    };
+
+    goog.object.findKey = function (a, b, c) {
+      for (var d in a) {
+        if (b.call(c, a[d], d, a)) return d;
+      }
+    };
+
+    goog.object.findValue = function (a, b, c) {
+      return (b = goog.object.findKey(a, b, c)) && a[b];
+    };
+
+    goog.object.isEmpty = function (a) {
+      for (var b in a) {
+        return !1;
+      }
+
+      return !0;
+    };
+
+    goog.object.clear = function (a) {
+      for (var b in a) {
+        delete a[b];
+      }
+    };
+
+    goog.object.remove = function (a, b) {
+      var c;
+      (c = b in a) && delete a[b];
+      return c;
+    };
+
+    goog.object.add = function (a, b, c) {
+      if (null !== a && b in a) throw Error('The object already contains the key "' + b + '"');
+      goog.object.set(a, b, c);
+    };
+
+    goog.object.get = function (a, b, c) {
+      return null !== a && b in a ? a[b] : c;
+    };
+
+    goog.object.set = function (a, b, c) {
+      a[b] = c;
+    };
+
+    goog.object.setIfUndefined = function (a, b, c) {
+      return b in a ? a[b] : a[b] = c;
+    };
+
+    goog.object.setWithReturnValueIfNotSet = function (a, b, c) {
+      if (b in a) return a[b];
+      c = c();
+      return a[b] = c;
+    };
+
+    goog.object.equals = function (a, b) {
+      for (var c in a) {
+        if (!(c in b) || a[c] !== b[c]) return !1;
+      }
+
+      for (var d in b) {
+        if (!(d in a)) return !1;
+      }
+
+      return !0;
+    };
+
+    goog.object.clone = function (a) {
+      var b = {},
+          c;
+
+      for (c in a) {
+        b[c] = a[c];
+      }
+
+      return b;
+    };
+
+    goog.object.unsafeClone = function (a) {
+      var b = goog.typeOf(a);
+
+      if ("object" == b || "array" == b) {
+        if (goog.isFunction(a.clone)) return a.clone();
+        b = "array" == b ? [] : {};
+
+        for (var c in a) {
+          b[c] = goog.object.unsafeClone(a[c]);
+        }
+
+        return b;
+      }
+
+      return a;
+    };
+
+    goog.object.transpose = function (a) {
+      var b = {},
+          c;
+
+      for (c in a) {
+        b[a[c]] = c;
+      }
+
+      return b;
+    };
+
+    goog.object.PROTOTYPE_FIELDS_ = "constructor hasOwnProperty isPrototypeOf propertyIsEnumerable toLocaleString toString valueOf".split(" ");
+
+    goog.object.extend = function (a, b) {
+      for (var c, d, e = 1; e < arguments.length; e++) {
+        d = arguments[e];
+
+        for (c in d) {
+          a[c] = d[c];
+        }
+
+        for (var f = 0; f < goog.object.PROTOTYPE_FIELDS_.length; f++) {
+          c = goog.object.PROTOTYPE_FIELDS_[f], Object.prototype.hasOwnProperty.call(d, c) && (a[c] = d[c]);
+        }
+      }
+    };
+
+    goog.object.create = function (a) {
+      var b = arguments.length;
+      if (1 == b && goog.isArray(arguments[0])) return goog.object.create.apply(null, arguments[0]);
+      if (b % 2) throw Error("Uneven number of arguments");
+
+      for (var c = {}, d = 0; d < b; d += 2) {
+        c[arguments[d]] = arguments[d + 1];
+      }
+
+      return c;
+    };
+
+    goog.object.createSet = function (a) {
+      var b = arguments.length;
+      if (1 == b && goog.isArray(arguments[0])) return goog.object.createSet.apply(null, arguments[0]);
+
+      for (var c = {}, d = 0; d < b; d++) {
+        c[arguments[d]] = !0;
+      }
+
+      return c;
+    };
+
+    goog.object.createImmutableView = function (a) {
+      var b = a;
+      Object.isFrozen && !Object.isFrozen(a) && (b = Object.create(a), Object.freeze(b));
+      return b;
+    };
+
+    goog.object.isImmutableView = function (a) {
+      return !!Object.isFrozen && Object.isFrozen(a);
+    };
+
+    goog.object.getAllPropertyNames = function (a, b, c) {
+      if (!a) return [];
+      if (!Object.getOwnPropertyNames || !Object.getPrototypeOf) return goog.object.getKeys(a);
+
+      for (var d = {}; a && (a !== Object.prototype || b) && (a !== Function.prototype || c);) {
+        for (var e = Object.getOwnPropertyNames(a), f = 0; f < e.length; f++) {
+          d[e[f]] = !0;
+        }
+
+        a = Object.getPrototypeOf(a);
+      }
+
+      return goog.object.getKeys(d);
+    };
+
+    goog.object.getSuperClass = function (a) {
+      return (a = Object.getPrototypeOf(a.prototype)) && a.constructor;
+    };
+
+    goog.debug = {};
+
+    goog.debug.Error = function (a) {
+      if (Error.captureStackTrace) Error.captureStackTrace(this, goog.debug.Error);else {
+        var b = Error().stack;
+        b && (this.stack = b);
+      }
+      a && (this.message = String(a));
+      this.reportErrorToServer = !0;
+    };
+
+    goog.inherits(goog.debug.Error, Error);
+    goog.debug.Error.prototype.name = "CustomError";
+    goog.dom = {};
+    goog.dom.NodeType = {
+      ELEMENT: 1,
+      ATTRIBUTE: 2,
+      TEXT: 3,
+      CDATA_SECTION: 4,
+      ENTITY_REFERENCE: 5,
+      ENTITY: 6,
+      PROCESSING_INSTRUCTION: 7,
+      COMMENT: 8,
+      DOCUMENT: 9,
+      DOCUMENT_TYPE: 10,
+      DOCUMENT_FRAGMENT: 11,
+      NOTATION: 12
+    };
+    goog.asserts = {};
+    goog.asserts.ENABLE_ASSERTS = goog.DEBUG;
+
+    goog.asserts.AssertionError = function (a, b) {
+      goog.debug.Error.call(this, goog.asserts.subs_(a, b));
+      this.messagePattern = a;
+    };
+
+    goog.inherits(goog.asserts.AssertionError, goog.debug.Error);
+    goog.asserts.AssertionError.prototype.name = "AssertionError";
+
+    goog.asserts.DEFAULT_ERROR_HANDLER = function (a) {
+      throw a;
+    };
+
+    goog.asserts.errorHandler_ = goog.asserts.DEFAULT_ERROR_HANDLER;
+
+    goog.asserts.subs_ = function (a, b) {
+      a = a.split("%s");
+
+      for (var c = "", d = a.length - 1, e = 0; e < d; e++) {
+        c += a[e] + (e < b.length ? b[e] : "%s");
+      }
+
+      return c + a[d];
+    };
+
+    goog.asserts.doAssertFailure_ = function (a, b, c, d) {
+      var e = "Assertion failed";
+
+      if (c) {
+        e += ": " + c;
+        var f = d;
+      } else a && (e += ": " + a, f = b);
+
+      a = new goog.asserts.AssertionError("" + e, f || []);
+      goog.asserts.errorHandler_(a);
+    };
+
+    goog.asserts.setErrorHandler = function (a) {
+      goog.asserts.ENABLE_ASSERTS && (goog.asserts.errorHandler_ = a);
+    };
+
+    goog.asserts.assert = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !a && goog.asserts.doAssertFailure_("", null, b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertExists = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && null == a && goog.asserts.doAssertFailure_("Expected to exist: %s.", [a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.fail = function (a, b) {
+      goog.asserts.ENABLE_ASSERTS && goog.asserts.errorHandler_(new goog.asserts.AssertionError("Failure" + (a ? ": " + a : ""), Array.prototype.slice.call(arguments, 1)));
+    };
+
+    goog.asserts.assertNumber = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !goog.isNumber(a) && goog.asserts.doAssertFailure_("Expected number but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertString = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !goog.isString(a) && goog.asserts.doAssertFailure_("Expected string but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertFunction = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !goog.isFunction(a) && goog.asserts.doAssertFailure_("Expected function but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertObject = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !goog.isObject(a) && goog.asserts.doAssertFailure_("Expected object but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertArray = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !goog.isArray(a) && goog.asserts.doAssertFailure_("Expected array but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertBoolean = function (a, b, c) {
+      goog.asserts.ENABLE_ASSERTS && !goog.isBoolean(a) && goog.asserts.doAssertFailure_("Expected boolean but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertElement = function (a, b, c) {
+      !goog.asserts.ENABLE_ASSERTS || goog.isObject(a) && a.nodeType == goog.dom.NodeType.ELEMENT || goog.asserts.doAssertFailure_("Expected Element but got %s: %s.", [goog.typeOf(a), a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertInstanceof = function (a, b, c, d) {
+      !goog.asserts.ENABLE_ASSERTS || a instanceof b || goog.asserts.doAssertFailure_("Expected instanceof %s but got %s.", [goog.asserts.getType_(b), goog.asserts.getType_(a)], c, Array.prototype.slice.call(arguments, 3));
+      return a;
+    };
+
+    goog.asserts.assertFinite = function (a, b, c) {
+      !goog.asserts.ENABLE_ASSERTS || "number" == typeof a && isFinite(a) || goog.asserts.doAssertFailure_("Expected %s to be a finite number but it is not.", [a], b, Array.prototype.slice.call(arguments, 2));
+      return a;
+    };
+
+    goog.asserts.assertObjectPrototypeIsIntact = function () {
+      for (var a in Object.prototype) {
+        goog.asserts.fail(a + " should not be enumerable in Object.prototype.");
+      }
+    };
+
+    goog.asserts.getType_ = function (a) {
+      return a instanceof Function ? a.displayName || a.name || "unknown type name" : a instanceof Object ? a.constructor.displayName || a.constructor.name || Object.prototype.toString.call(a) : null === a ? "null" : _typeof(a);
+    };
+
+    var jspb = {
+      BinaryConstants: {},
+      ConstBinaryMessage: function ConstBinaryMessage() {},
+      BinaryMessage: function BinaryMessage() {}
+    };
+    jspb.BinaryConstants.FieldType = {
+      INVALID: -1,
+      DOUBLE: 1,
+      FLOAT: 2,
+      INT64: 3,
+      UINT64: 4,
+      INT32: 5,
+      FIXED64: 6,
+      FIXED32: 7,
+      BOOL: 8,
+      STRING: 9,
+      GROUP: 10,
+      MESSAGE: 11,
+      BYTES: 12,
+      UINT32: 13,
+      ENUM: 14,
+      SFIXED32: 15,
+      SFIXED64: 16,
+      SINT32: 17,
+      SINT64: 18,
+      FHASH64: 30,
+      VHASH64: 31
+    };
+    jspb.BinaryConstants.WireType = {
+      INVALID: -1,
+      VARINT: 0,
+      FIXED64: 1,
+      DELIMITED: 2,
+      START_GROUP: 3,
+      END_GROUP: 4,
+      FIXED32: 5
+    };
+
+    jspb.BinaryConstants.FieldTypeToWireType = function (a) {
+      var b = jspb.BinaryConstants.FieldType,
+          c = jspb.BinaryConstants.WireType;
+
+      switch (a) {
+        case b.INT32:
+        case b.INT64:
+        case b.UINT32:
+        case b.UINT64:
+        case b.SINT32:
+        case b.SINT64:
+        case b.BOOL:
+        case b.ENUM:
+        case b.VHASH64:
+          return c.VARINT;
+
+        case b.DOUBLE:
+        case b.FIXED64:
+        case b.SFIXED64:
+        case b.FHASH64:
+          return c.FIXED64;
+
+        case b.STRING:
+        case b.MESSAGE:
+        case b.BYTES:
+          return c.DELIMITED;
+
+        case b.FLOAT:
+        case b.FIXED32:
+        case b.SFIXED32:
+          return c.FIXED32;
+
+        default:
+          return c.INVALID;
+      }
+    };
+
+    jspb.BinaryConstants.INVALID_FIELD_NUMBER = -1;
+    jspb.BinaryConstants.FLOAT32_EPS = 1.401298464324817E-45;
+    jspb.BinaryConstants.FLOAT32_MIN = 1.1754943508222875E-38;
+    jspb.BinaryConstants.FLOAT32_MAX = 3.4028234663852886E38;
+    jspb.BinaryConstants.FLOAT64_EPS = 4.9E-324;
+    jspb.BinaryConstants.FLOAT64_MIN = 2.2250738585072014E-308;
+    jspb.BinaryConstants.FLOAT64_MAX = 1.7976931348623157E308;
+    jspb.BinaryConstants.TWO_TO_20 = 1048576;
+    jspb.BinaryConstants.TWO_TO_23 = 8388608;
+    jspb.BinaryConstants.TWO_TO_31 = 2147483648;
+    jspb.BinaryConstants.TWO_TO_32 = 4294967296;
+    jspb.BinaryConstants.TWO_TO_52 = 4503599627370496;
+    jspb.BinaryConstants.TWO_TO_63 = 0x7fffffffffffffff;
+    jspb.BinaryConstants.TWO_TO_64 = 1.8446744073709552E19;
+    jspb.BinaryConstants.ZERO_HASH = "\x00\x00\x00\x00\x00\x00\x00\x00";
+    goog.array = {};
+    goog.NATIVE_ARRAY_PROTOTYPES = goog.TRUSTED_SITE;
+    goog.array.ASSUME_NATIVE_FUNCTIONS = 2012 < goog.FEATURESET_YEAR;
+
+    goog.array.peek = function (a) {
+      return a[a.length - 1];
+    };
+
+    goog.array.last = goog.array.peek;
+    goog.array.indexOf = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.indexOf) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.indexOf.call(a, b, c);
+    } : function (a, b, c) {
+      c = null == c ? 0 : 0 > c ? Math.max(0, a.length + c) : c;
+      if (goog.isString(a)) return goog.isString(b) && 1 == b.length ? a.indexOf(b, c) : -1;
+
+      for (; c < a.length; c++) {
+        if (c in a && a[c] === b) return c;
+      }
+
+      return -1;
+    };
+    goog.array.lastIndexOf = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.lastIndexOf) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.lastIndexOf.call(a, b, null == c ? a.length - 1 : c);
+    } : function (a, b, c) {
+      c = null == c ? a.length - 1 : c;
+      0 > c && (c = Math.max(0, a.length + c));
+      if (goog.isString(a)) return goog.isString(b) && 1 == b.length ? a.lastIndexOf(b, c) : -1;
+
+      for (; 0 <= c; c--) {
+        if (c in a && a[c] === b) return c;
+      }
+
+      return -1;
+    };
+    goog.array.forEach = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.forEach) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      Array.prototype.forEach.call(a, b, c);
+    } : function (a, b, c) {
+      for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
+        f in e && b.call(c, e[f], f, a);
+      }
+    };
+
+    goog.array.forEachRight = function (a, b, c) {
+      var d = a.length,
+          e = goog.isString(a) ? a.split("") : a;
+
+      for (--d; 0 <= d; --d) {
+        d in e && b.call(c, e[d], d, a);
+      }
+    };
+
+    goog.array.filter = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.filter) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.filter.call(a, b, c);
+    } : function (a, b, c) {
+      for (var d = a.length, e = [], f = 0, g = goog.isString(a) ? a.split("") : a, h = 0; h < d; h++) {
+        if (h in g) {
+          var k = g[h];
+          b.call(c, k, h, a) && (e[f++] = k);
+        }
+      }
+
+      return e;
+    };
+    goog.array.map = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.map) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.map.call(a, b, c);
+    } : function (a, b, c) {
+      for (var d = a.length, e = Array(d), f = goog.isString(a) ? a.split("") : a, g = 0; g < d; g++) {
+        g in f && (e[g] = b.call(c, f[g], g, a));
+      }
+
+      return e;
+    };
+    goog.array.reduce = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.reduce) ? function (a, b, c, d) {
+      goog.asserts.assert(null != a.length);
+      d && (b = goog.bind(b, d));
+      return Array.prototype.reduce.call(a, b, c);
+    } : function (a, b, c, d) {
+      var e = c;
+      goog.array.forEach(a, function (c, g) {
+        e = b.call(d, e, c, g, a);
+      });
+      return e;
+    };
+    goog.array.reduceRight = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.reduceRight) ? function (a, b, c, d) {
+      goog.asserts.assert(null != a.length);
+      goog.asserts.assert(null != b);
+      d && (b = goog.bind(b, d));
+      return Array.prototype.reduceRight.call(a, b, c);
+    } : function (a, b, c, d) {
+      var e = c;
+      goog.array.forEachRight(a, function (c, g) {
+        e = b.call(d, e, c, g, a);
+      });
+      return e;
+    };
+    goog.array.some = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.some) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.some.call(a, b, c);
+    } : function (a, b, c) {
+      for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
+        if (f in e && b.call(c, e[f], f, a)) return !0;
+      }
+
+      return !1;
+    };
+    goog.array.every = goog.NATIVE_ARRAY_PROTOTYPES && (goog.array.ASSUME_NATIVE_FUNCTIONS || Array.prototype.every) ? function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.every.call(a, b, c);
+    } : function (a, b, c) {
+      for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
+        if (f in e && !b.call(c, e[f], f, a)) return !1;
+      }
+
+      return !0;
+    };
+
+    goog.array.count = function (a, b, c) {
+      var d = 0;
+      goog.array.forEach(a, function (a, f, g) {
+        b.call(c, a, f, g) && ++d;
+      }, c);
+      return d;
+    };
+
+    goog.array.find = function (a, b, c) {
+      b = goog.array.findIndex(a, b, c);
+      return 0 > b ? null : goog.isString(a) ? a.charAt(b) : a[b];
+    };
+
+    goog.array.findIndex = function (a, b, c) {
+      for (var d = a.length, e = goog.isString(a) ? a.split("") : a, f = 0; f < d; f++) {
+        if (f in e && b.call(c, e[f], f, a)) return f;
+      }
+
+      return -1;
+    };
+
+    goog.array.findRight = function (a, b, c) {
+      b = goog.array.findIndexRight(a, b, c);
+      return 0 > b ? null : goog.isString(a) ? a.charAt(b) : a[b];
+    };
+
+    goog.array.findIndexRight = function (a, b, c) {
+      var d = a.length,
+          e = goog.isString(a) ? a.split("") : a;
+
+      for (--d; 0 <= d; d--) {
+        if (d in e && b.call(c, e[d], d, a)) return d;
+      }
+
+      return -1;
+    };
+
+    goog.array.contains = function (a, b) {
+      return 0 <= goog.array.indexOf(a, b);
+    };
+
+    goog.array.isEmpty = function (a) {
+      return 0 == a.length;
+    };
+
+    goog.array.clear = function (a) {
+      if (!goog.isArray(a)) for (var b = a.length - 1; 0 <= b; b--) {
+        delete a[b];
+      }
+      a.length = 0;
+    };
+
+    goog.array.insert = function (a, b) {
+      goog.array.contains(a, b) || a.push(b);
+    };
+
+    goog.array.insertAt = function (a, b, c) {
+      goog.array.splice(a, c, 0, b);
+    };
+
+    goog.array.insertArrayAt = function (a, b, c) {
+      goog.partial(goog.array.splice, a, c, 0).apply(null, b);
+    };
+
+    goog.array.insertBefore = function (a, b, c) {
+      var d;
+      2 == arguments.length || 0 > (d = goog.array.indexOf(a, c)) ? a.push(b) : goog.array.insertAt(a, b, d);
+    };
+
+    goog.array.remove = function (a, b) {
+      b = goog.array.indexOf(a, b);
+      var c;
+      (c = 0 <= b) && goog.array.removeAt(a, b);
+      return c;
+    };
+
+    goog.array.removeLast = function (a, b) {
+      b = goog.array.lastIndexOf(a, b);
+      return 0 <= b ? (goog.array.removeAt(a, b), !0) : !1;
+    };
+
+    goog.array.removeAt = function (a, b) {
+      goog.asserts.assert(null != a.length);
+      return 1 == Array.prototype.splice.call(a, b, 1).length;
+    };
+
+    goog.array.removeIf = function (a, b, c) {
+      b = goog.array.findIndex(a, b, c);
+      return 0 <= b ? (goog.array.removeAt(a, b), !0) : !1;
+    };
+
+    goog.array.removeAllIf = function (a, b, c) {
+      var d = 0;
+      goog.array.forEachRight(a, function (e, f) {
+        b.call(c, e, f, a) && goog.array.removeAt(a, f) && d++;
+      });
+      return d;
+    };
+
+    goog.array.concat = function (a) {
+      return Array.prototype.concat.apply([], arguments);
+    };
+
+    goog.array.join = function (a) {
+      return Array.prototype.concat.apply([], arguments);
+    };
+
+    goog.array.toArray = function (a) {
+      var b = a.length;
+
+      if (0 < b) {
+        for (var c = Array(b), d = 0; d < b; d++) {
+          c[d] = a[d];
+        }
+
+        return c;
+      }
+
+      return [];
+    };
+
+    goog.array.clone = goog.array.toArray;
+
+    goog.array.extend = function (a, b) {
+      for (var c = 1; c < arguments.length; c++) {
+        var d = arguments[c];
+
+        if (goog.isArrayLike(d)) {
+          var e = a.length || 0,
+              f = d.length || 0;
+          a.length = e + f;
+
+          for (var g = 0; g < f; g++) {
+            a[e + g] = d[g];
+          }
+        } else a.push(d);
+      }
+    };
+
+    goog.array.splice = function (a, b, c, d) {
+      goog.asserts.assert(null != a.length);
+      return Array.prototype.splice.apply(a, goog.array.slice(arguments, 1));
+    };
+
+    goog.array.slice = function (a, b, c) {
+      goog.asserts.assert(null != a.length);
+      return 2 >= arguments.length ? Array.prototype.slice.call(a, b) : Array.prototype.slice.call(a, b, c);
+    };
+
+    goog.array.removeDuplicates = function (a, b, c) {
+      b = b || a;
+
+      var d = function d(a) {
+        return goog.isObject(a) ? "o" + goog.getUid(a) : _typeof(a).charAt(0) + a;
+      };
+
+      c = c || d;
+      d = {};
+
+      for (var e = 0, f = 0; f < a.length;) {
+        var g = a[f++],
+            h = c(g);
+        Object.prototype.hasOwnProperty.call(d, h) || (d[h] = !0, b[e++] = g);
+      }
+
+      b.length = e;
+    };
+
+    goog.array.binarySearch = function (a, b, c) {
+      return goog.array.binarySearch_(a, c || goog.array.defaultCompare, !1, b);
+    };
+
+    goog.array.binarySelect = function (a, b, c) {
+      return goog.array.binarySearch_(a, b, !0, void 0, c);
+    };
+
+    goog.array.binarySearch_ = function (a, b, c, d, e) {
+      for (var f = 0, g = a.length, h; f < g;) {
+        var k = f + g >> 1;
+        var l = c ? b.call(e, a[k], k, a) : b(d, a[k]);
+        0 < l ? f = k + 1 : (g = k, h = !l);
+      }
+
+      return h ? f : ~f;
+    };
+
+    goog.array.sort = function (a, b) {
+      a.sort(b || goog.array.defaultCompare);
+    };
+
+    goog.array.stableSort = function (a, b) {
+      for (var c = Array(a.length), d = 0; d < a.length; d++) {
+        c[d] = {
+          index: d,
+          value: a[d]
+        };
+      }
+
+      var e = b || goog.array.defaultCompare;
+      goog.array.sort(c, function (a, b) {
+        return e(a.value, b.value) || a.index - b.index;
+      });
+
+      for (d = 0; d < a.length; d++) {
+        a[d] = c[d].value;
+      }
+    };
+
+    goog.array.sortByKey = function (a, b, c) {
+      var d = c || goog.array.defaultCompare;
+      goog.array.sort(a, function (a, c) {
+        return d(b(a), b(c));
+      });
+    };
+
+    goog.array.sortObjectsByKey = function (a, b, c) {
+      goog.array.sortByKey(a, function (a) {
+        return a[b];
+      }, c);
+    };
+
+    goog.array.isSorted = function (a, b, c) {
+      b = b || goog.array.defaultCompare;
+
+      for (var d = 1; d < a.length; d++) {
+        var e = b(a[d - 1], a[d]);
+        if (0 < e || 0 == e && c) return !1;
+      }
+
+      return !0;
+    };
+
+    goog.array.equals = function (a, b, c) {
+      if (!goog.isArrayLike(a) || !goog.isArrayLike(b) || a.length != b.length) return !1;
+      var d = a.length;
+      c = c || goog.array.defaultCompareEquality;
+
+      for (var e = 0; e < d; e++) {
+        if (!c(a[e], b[e])) return !1;
+      }
+
+      return !0;
+    };
+
+    goog.array.compare3 = function (a, b, c) {
+      c = c || goog.array.defaultCompare;
+
+      for (var d = Math.min(a.length, b.length), e = 0; e < d; e++) {
+        var f = c(a[e], b[e]);
+        if (0 != f) return f;
+      }
+
+      return goog.array.defaultCompare(a.length, b.length);
+    };
+
+    goog.array.defaultCompare = function (a, b) {
+      return a > b ? 1 : a < b ? -1 : 0;
+    };
+
+    goog.array.inverseDefaultCompare = function (a, b) {
+      return -goog.array.defaultCompare(a, b);
+    };
+
+    goog.array.defaultCompareEquality = function (a, b) {
+      return a === b;
+    };
+
+    goog.array.binaryInsert = function (a, b, c) {
+      c = goog.array.binarySearch(a, b, c);
+      return 0 > c ? (goog.array.insertAt(a, b, -(c + 1)), !0) : !1;
+    };
+
+    goog.array.binaryRemove = function (a, b, c) {
+      b = goog.array.binarySearch(a, b, c);
+      return 0 <= b ? goog.array.removeAt(a, b) : !1;
+    };
+
+    goog.array.bucket = function (a, b, c) {
+      for (var d = {}, e = 0; e < a.length; e++) {
+        var f = a[e],
+            g = b.call(c, f, e, a);
+        goog.isDef(g) && (d[g] || (d[g] = [])).push(f);
+      }
+
+      return d;
+    };
+
+    goog.array.toObject = function (a, b, c) {
+      var d = {};
+      goog.array.forEach(a, function (e, f) {
+        d[b.call(c, e, f, a)] = e;
+      });
+      return d;
+    };
+
+    goog.array.range = function (a, b, c) {
+      var d = [],
+          e = 0,
+          f = a;
+      c = c || 1;
+      void 0 !== b && (e = a, f = b);
+      if (0 > c * (f - e)) return [];
+      if (0 < c) for (a = e; a < f; a += c) {
+        d.push(a);
+      } else for (a = e; a > f; a += c) {
+        d.push(a);
+      }
+      return d;
+    };
+
+    goog.array.repeat = function (a, b) {
+      for (var c = [], d = 0; d < b; d++) {
+        c[d] = a;
+      }
+
+      return c;
+    };
+
+    goog.array.flatten = function (a) {
+      for (var b = [], c = 0; c < arguments.length; c++) {
+        var d = arguments[c];
+        if (goog.isArray(d)) for (var e = 0; e < d.length; e += 8192) {
+          var f = goog.array.slice(d, e, e + 8192);
+          f = goog.array.flatten.apply(null, f);
+
+          for (var g = 0; g < f.length; g++) {
+            b.push(f[g]);
+          }
+        } else b.push(d);
+      }
+
+      return b;
+    };
+
+    goog.array.rotate = function (a, b) {
+      goog.asserts.assert(null != a.length);
+      a.length && (b %= a.length, 0 < b ? Array.prototype.unshift.apply(a, a.splice(-b, b)) : 0 > b && Array.prototype.push.apply(a, a.splice(0, -b)));
+      return a;
+    };
+
+    goog.array.moveItem = function (a, b, c) {
+      goog.asserts.assert(0 <= b && b < a.length);
+      goog.asserts.assert(0 <= c && c < a.length);
+      b = Array.prototype.splice.call(a, b, 1);
+      Array.prototype.splice.call(a, c, 0, b[0]);
+    };
+
+    goog.array.zip = function (a) {
+      if (!arguments.length) return [];
+
+      for (var b = [], c = arguments[0].length, d = 1; d < arguments.length; d++) {
+        arguments[d].length < c && (c = arguments[d].length);
+      }
+
+      for (d = 0; d < c; d++) {
+        for (var e = [], f = 0; f < arguments.length; f++) {
+          e.push(arguments[f][d]);
+        }
+
+        b.push(e);
+      }
+
+      return b;
+    };
+
+    goog.array.shuffle = function (a, b) {
+      b = b || Math.random;
+
+      for (var c = a.length - 1; 0 < c; c--) {
+        var d = Math.floor(b() * (c + 1)),
+            e = a[c];
+        a[c] = a[d];
+        a[d] = e;
+      }
+    };
+
+    goog.array.copyByIndex = function (a, b) {
+      var c = [];
+      goog.array.forEach(b, function (b) {
+        c.push(a[b]);
+      });
+      return c;
+    };
+
+    goog.array.concatMap = function (a, b, c) {
+      return goog.array.concat.apply([], goog.array.map(a, b, c));
+    };
+
+    goog.crypt = {};
+
+    goog.crypt.stringToByteArray = function (a) {
+      for (var b = [], c = 0, d = 0; d < a.length; d++) {
+        var e = a.charCodeAt(d);
+        255 < e && (b[c++] = e & 255, e >>= 8);
+        b[c++] = e;
+      }
+
+      return b;
+    };
+
+    goog.crypt.byteArrayToString = function (a) {
+      if (8192 >= a.length) return String.fromCharCode.apply(null, a);
+
+      for (var b = "", c = 0; c < a.length; c += 8192) {
+        var d = goog.array.slice(a, c, c + 8192);
+        b += String.fromCharCode.apply(null, d);
+      }
+
+      return b;
+    };
+
+    goog.crypt.byteArrayToHex = function (a, b) {
+      return goog.array.map(a, function (a) {
+        a = a.toString(16);
+        return 1 < a.length ? a : "0" + a;
+      }).join(b || "");
+    };
+
+    goog.crypt.hexToByteArray = function (a) {
+      goog.asserts.assert(0 == a.length % 2, "Key string length must be multiple of 2");
+
+      for (var b = [], c = 0; c < a.length; c += 2) {
+        b.push(parseInt(a.substring(c, c + 2), 16));
+      }
+
+      return b;
+    };
+
+    goog.crypt.stringToUtf8ByteArray = function (a) {
+      for (var b = [], c = 0, d = 0; d < a.length; d++) {
+        var e = a.charCodeAt(d);
+        128 > e ? b[c++] = e : (2048 > e ? b[c++] = e >> 6 | 192 : (55296 == (e & 64512) && d + 1 < a.length && 56320 == (a.charCodeAt(d + 1) & 64512) ? (e = 65536 + ((e & 1023) << 10) + (a.charCodeAt(++d) & 1023), b[c++] = e >> 18 | 240, b[c++] = e >> 12 & 63 | 128) : b[c++] = e >> 12 | 224, b[c++] = e >> 6 & 63 | 128), b[c++] = e & 63 | 128);
+      }
+
+      return b;
+    };
+
+    goog.crypt.utf8ByteArrayToString = function (a) {
+      for (var b = [], c = 0, d = 0; c < a.length;) {
+        var e = a[c++];
+        if (128 > e) b[d++] = String.fromCharCode(e);else if (191 < e && 224 > e) {
+          var f = a[c++];
+          b[d++] = String.fromCharCode((e & 31) << 6 | f & 63);
+        } else if (239 < e && 365 > e) {
+          f = a[c++];
+          var g = a[c++],
+              h = a[c++];
+          e = ((e & 7) << 18 | (f & 63) << 12 | (g & 63) << 6 | h & 63) - 65536;
+          b[d++] = String.fromCharCode(55296 + (e >> 10));
+          b[d++] = String.fromCharCode(56320 + (e & 1023));
+        } else f = a[c++], g = a[c++], b[d++] = String.fromCharCode((e & 15) << 12 | (f & 63) << 6 | g & 63);
+      }
+
+      return b.join("");
+    };
+
+    goog.crypt.xorByteArray = function (a, b) {
+      goog.asserts.assert(a.length == b.length, "XOR array lengths must match");
+
+      for (var c = [], d = 0; d < a.length; d++) {
+        c.push(a[d] ^ b[d]);
+      }
+
+      return c;
+    };
+
+    goog.dom.asserts = {};
+
+    goog.dom.asserts.assertIsLocation = function (a) {
+      if (goog.asserts.ENABLE_ASSERTS) {
+        var b = goog.dom.asserts.getWindow_(a);
+        b && (!a || !(a instanceof b.Location) && a instanceof b.Element) && goog.asserts.fail("Argument is not a Location (or a non-Element mock); got: %s", goog.dom.asserts.debugStringForType_(a));
+      }
+
+      return a;
+    };
+
+    goog.dom.asserts.assertIsElementType_ = function (a, b) {
+      if (goog.asserts.ENABLE_ASSERTS) {
+        var c = goog.dom.asserts.getWindow_(a);
+        c && "undefined" != typeof c[b] && (a && (a instanceof c[b] || !(a instanceof c.Location || a instanceof c.Element)) || goog.asserts.fail("Argument is not a %s (or a non-Element, non-Location mock); got: %s", b, goog.dom.asserts.debugStringForType_(a)));
+      }
+
+      return a;
+    };
+
+    goog.dom.asserts.assertIsHTMLAnchorElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLAnchorElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLButtonElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLButtonElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLLinkElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLLinkElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLImageElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLImageElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLAudioElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLAudioElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLVideoElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLVideoElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLInputElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLInputElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLTextAreaElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLTextAreaElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLCanvasElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLCanvasElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLEmbedElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLEmbedElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLFormElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLFormElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLFrameElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLFrameElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLIFrameElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLIFrameElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLObjectElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLObjectElement");
+    };
+
+    goog.dom.asserts.assertIsHTMLScriptElement = function (a) {
+      return goog.dom.asserts.assertIsElementType_(a, "HTMLScriptElement");
+    };
+
+    goog.dom.asserts.debugStringForType_ = function (a) {
+      if (goog.isObject(a)) try {
+        return a.constructor.displayName || a.constructor.name || Object.prototype.toString.call(a);
+      } catch (b) {
+        return "<object could not be stringified>";
+      } else return void 0 === a ? "undefined" : null === a ? "null" : _typeof(a);
+    };
+
+    goog.dom.asserts.getWindow_ = function (a) {
+      try {
+        var b = a && a.ownerDocument,
+            c = b && (b.defaultView || b.parentWindow);
+        c = c || goog.global;
+        if (c.Element && c.Location) return c;
+      } catch (d) {}
+
+      return null;
+    };
+
+    goog.functions = {};
+
+    goog.functions.constant = function (a) {
+      return function () {
+        return a;
+      };
+    };
+
+    goog.functions.FALSE = function () {
+      return !1;
+    };
+
+    goog.functions.TRUE = function () {
+      return !0;
+    };
+
+    goog.functions.NULL = function () {
+      return null;
+    };
+
+    goog.functions.identity = function (a, b) {
+      return a;
+    };
+
+    goog.functions.error = function (a) {
+      return function () {
+        throw Error(a);
+      };
+    };
+
+    goog.functions.fail = function (a) {
+      return function () {
+        throw a;
+      };
+    };
+
+    goog.functions.lock = function (a, b) {
+      b = b || 0;
+      return function () {
+        return a.apply(this, Array.prototype.slice.call(arguments, 0, b));
+      };
+    };
+
+    goog.functions.nth = function (a) {
+      return function () {
+        return arguments[a];
+      };
+    };
+
+    goog.functions.partialRight = function (a, b) {
+      var c = Array.prototype.slice.call(arguments, 1);
+      return function () {
+        var b = Array.prototype.slice.call(arguments);
+        b.push.apply(b, c);
+        return a.apply(this, b);
+      };
+    };
+
+    goog.functions.withReturnValue = function (a, b) {
+      return goog.functions.sequence(a, goog.functions.constant(b));
+    };
+
+    goog.functions.equalTo = function (a, b) {
+      return function (c) {
+        return b ? a == c : a === c;
+      };
+    };
+
+    goog.functions.compose = function (a, b) {
+      var c = arguments,
+          d = c.length;
+      return function () {
+        var a;
+        d && (a = c[d - 1].apply(this, arguments));
+
+        for (var b = d - 2; 0 <= b; b--) {
+          a = c[b].call(this, a);
+        }
+
+        return a;
+      };
+    };
+
+    goog.functions.sequence = function (a) {
+      var b = arguments,
+          c = b.length;
+      return function () {
+        for (var a, e = 0; e < c; e++) {
+          a = b[e].apply(this, arguments);
+        }
+
+        return a;
+      };
+    };
+
+    goog.functions.and = function (a) {
+      var b = arguments,
+          c = b.length;
+      return function () {
+        for (var a = 0; a < c; a++) {
+          if (!b[a].apply(this, arguments)) return !1;
+        }
+
+        return !0;
+      };
+    };
+
+    goog.functions.or = function (a) {
+      var b = arguments,
+          c = b.length;
+      return function () {
+        for (var a = 0; a < c; a++) {
+          if (b[a].apply(this, arguments)) return !0;
+        }
+
+        return !1;
+      };
+    };
+
+    goog.functions.not = function (a) {
+      return function () {
+        return !a.apply(this, arguments);
+      };
+    };
+
+    goog.functions.create = function (a, b) {
+      var c = function c() {};
+
+      c.prototype = a.prototype;
+      c = new c();
+      a.apply(c, Array.prototype.slice.call(arguments, 1));
+      return c;
+    };
+
+    goog.functions.CACHE_RETURN_VALUE = !0;
+
+    goog.functions.cacheReturnValue = function (a) {
+      var b = !1,
+          c;
+      return function () {
+        if (!goog.functions.CACHE_RETURN_VALUE) return a();
+        b || (c = a(), b = !0);
+        return c;
+      };
+    };
+
+    goog.functions.once = function (a) {
+      var b = a;
+      return function () {
+        if (b) {
+          var a = b;
+          b = null;
+          a();
+        }
+      };
+    };
+
+    goog.functions.debounce = function (a, b, c) {
+      var d = 0;
+      return function (e) {
+        goog.global.clearTimeout(d);
+        var f = arguments;
+        d = goog.global.setTimeout(function () {
+          a.apply(c, f);
+        }, b);
+      };
+    };
+
+    goog.functions.throttle = function (a, b, c) {
+      var d = 0,
+          e = !1,
+          f = [],
+          g = function g() {
+        d = 0;
+        e && (e = !1, h());
+      },
+          h = function h() {
+        d = goog.global.setTimeout(g, b);
+        a.apply(c, f);
+      };
+
+      return function (a) {
+        f = arguments;
+        d ? e = !0 : h();
+      };
+    };
+
+    goog.functions.rateLimit = function (a, b, c) {
+      var d = 0,
+          e = function e() {
+        d = 0;
+      };
+
+      return function (f) {
+        d || (d = goog.global.setTimeout(e, b), a.apply(c, arguments));
+      };
+    };
+
+    goog.dom.HtmlElement = function () {};
+
+    goog.dom.TagName = function (a) {
+      this.tagName_ = a;
+    };
+
+    goog.dom.TagName.prototype.toString = function () {
+      return this.tagName_;
+    };
+
+    goog.dom.TagName.A = new goog.dom.TagName("A");
+    goog.dom.TagName.ABBR = new goog.dom.TagName("ABBR");
+    goog.dom.TagName.ACRONYM = new goog.dom.TagName("ACRONYM");
+    goog.dom.TagName.ADDRESS = new goog.dom.TagName("ADDRESS");
+    goog.dom.TagName.APPLET = new goog.dom.TagName("APPLET");
+    goog.dom.TagName.AREA = new goog.dom.TagName("AREA");
+    goog.dom.TagName.ARTICLE = new goog.dom.TagName("ARTICLE");
+    goog.dom.TagName.ASIDE = new goog.dom.TagName("ASIDE");
+    goog.dom.TagName.AUDIO = new goog.dom.TagName("AUDIO");
+    goog.dom.TagName.B = new goog.dom.TagName("B");
+    goog.dom.TagName.BASE = new goog.dom.TagName("BASE");
+    goog.dom.TagName.BASEFONT = new goog.dom.TagName("BASEFONT");
+    goog.dom.TagName.BDI = new goog.dom.TagName("BDI");
+    goog.dom.TagName.BDO = new goog.dom.TagName("BDO");
+    goog.dom.TagName.BIG = new goog.dom.TagName("BIG");
+    goog.dom.TagName.BLOCKQUOTE = new goog.dom.TagName("BLOCKQUOTE");
+    goog.dom.TagName.BODY = new goog.dom.TagName("BODY");
+    goog.dom.TagName.BR = new goog.dom.TagName("BR");
+    goog.dom.TagName.BUTTON = new goog.dom.TagName("BUTTON");
+    goog.dom.TagName.CANVAS = new goog.dom.TagName("CANVAS");
+    goog.dom.TagName.CAPTION = new goog.dom.TagName("CAPTION");
+    goog.dom.TagName.CENTER = new goog.dom.TagName("CENTER");
+    goog.dom.TagName.CITE = new goog.dom.TagName("CITE");
+    goog.dom.TagName.CODE = new goog.dom.TagName("CODE");
+    goog.dom.TagName.COL = new goog.dom.TagName("COL");
+    goog.dom.TagName.COLGROUP = new goog.dom.TagName("COLGROUP");
+    goog.dom.TagName.COMMAND = new goog.dom.TagName("COMMAND");
+    goog.dom.TagName.DATA = new goog.dom.TagName("DATA");
+    goog.dom.TagName.DATALIST = new goog.dom.TagName("DATALIST");
+    goog.dom.TagName.DD = new goog.dom.TagName("DD");
+    goog.dom.TagName.DEL = new goog.dom.TagName("DEL");
+    goog.dom.TagName.DETAILS = new goog.dom.TagName("DETAILS");
+    goog.dom.TagName.DFN = new goog.dom.TagName("DFN");
+    goog.dom.TagName.DIALOG = new goog.dom.TagName("DIALOG");
+    goog.dom.TagName.DIR = new goog.dom.TagName("DIR");
+    goog.dom.TagName.DIV = new goog.dom.TagName("DIV");
+    goog.dom.TagName.DL = new goog.dom.TagName("DL");
+    goog.dom.TagName.DT = new goog.dom.TagName("DT");
+    goog.dom.TagName.EM = new goog.dom.TagName("EM");
+    goog.dom.TagName.EMBED = new goog.dom.TagName("EMBED");
+    goog.dom.TagName.FIELDSET = new goog.dom.TagName("FIELDSET");
+    goog.dom.TagName.FIGCAPTION = new goog.dom.TagName("FIGCAPTION");
+    goog.dom.TagName.FIGURE = new goog.dom.TagName("FIGURE");
+    goog.dom.TagName.FONT = new goog.dom.TagName("FONT");
+    goog.dom.TagName.FOOTER = new goog.dom.TagName("FOOTER");
+    goog.dom.TagName.FORM = new goog.dom.TagName("FORM");
+    goog.dom.TagName.FRAME = new goog.dom.TagName("FRAME");
+    goog.dom.TagName.FRAMESET = new goog.dom.TagName("FRAMESET");
+    goog.dom.TagName.H1 = new goog.dom.TagName("H1");
+    goog.dom.TagName.H2 = new goog.dom.TagName("H2");
+    goog.dom.TagName.H3 = new goog.dom.TagName("H3");
+    goog.dom.TagName.H4 = new goog.dom.TagName("H4");
+    goog.dom.TagName.H5 = new goog.dom.TagName("H5");
+    goog.dom.TagName.H6 = new goog.dom.TagName("H6");
+    goog.dom.TagName.HEAD = new goog.dom.TagName("HEAD");
+    goog.dom.TagName.HEADER = new goog.dom.TagName("HEADER");
+    goog.dom.TagName.HGROUP = new goog.dom.TagName("HGROUP");
+    goog.dom.TagName.HR = new goog.dom.TagName("HR");
+    goog.dom.TagName.HTML = new goog.dom.TagName("HTML");
+    goog.dom.TagName.I = new goog.dom.TagName("I");
+    goog.dom.TagName.IFRAME = new goog.dom.TagName("IFRAME");
+    goog.dom.TagName.IMG = new goog.dom.TagName("IMG");
+    goog.dom.TagName.INPUT = new goog.dom.TagName("INPUT");
+    goog.dom.TagName.INS = new goog.dom.TagName("INS");
+    goog.dom.TagName.ISINDEX = new goog.dom.TagName("ISINDEX");
+    goog.dom.TagName.KBD = new goog.dom.TagName("KBD");
+    goog.dom.TagName.KEYGEN = new goog.dom.TagName("KEYGEN");
+    goog.dom.TagName.LABEL = new goog.dom.TagName("LABEL");
+    goog.dom.TagName.LEGEND = new goog.dom.TagName("LEGEND");
+    goog.dom.TagName.LI = new goog.dom.TagName("LI");
+    goog.dom.TagName.LINK = new goog.dom.TagName("LINK");
+    goog.dom.TagName.MAIN = new goog.dom.TagName("MAIN");
+    goog.dom.TagName.MAP = new goog.dom.TagName("MAP");
+    goog.dom.TagName.MARK = new goog.dom.TagName("MARK");
+    goog.dom.TagName.MATH = new goog.dom.TagName("MATH");
+    goog.dom.TagName.MENU = new goog.dom.TagName("MENU");
+    goog.dom.TagName.MENUITEM = new goog.dom.TagName("MENUITEM");
+    goog.dom.TagName.META = new goog.dom.TagName("META");
+    goog.dom.TagName.METER = new goog.dom.TagName("METER");
+    goog.dom.TagName.NAV = new goog.dom.TagName("NAV");
+    goog.dom.TagName.NOFRAMES = new goog.dom.TagName("NOFRAMES");
+    goog.dom.TagName.NOSCRIPT = new goog.dom.TagName("NOSCRIPT");
+    goog.dom.TagName.OBJECT = new goog.dom.TagName("OBJECT");
+    goog.dom.TagName.OL = new goog.dom.TagName("OL");
+    goog.dom.TagName.OPTGROUP = new goog.dom.TagName("OPTGROUP");
+    goog.dom.TagName.OPTION = new goog.dom.TagName("OPTION");
+    goog.dom.TagName.OUTPUT = new goog.dom.TagName("OUTPUT");
+    goog.dom.TagName.P = new goog.dom.TagName("P");
+    goog.dom.TagName.PARAM = new goog.dom.TagName("PARAM");
+    goog.dom.TagName.PICTURE = new goog.dom.TagName("PICTURE");
+    goog.dom.TagName.PRE = new goog.dom.TagName("PRE");
+    goog.dom.TagName.PROGRESS = new goog.dom.TagName("PROGRESS");
+    goog.dom.TagName.Q = new goog.dom.TagName("Q");
+    goog.dom.TagName.RP = new goog.dom.TagName("RP");
+    goog.dom.TagName.RT = new goog.dom.TagName("RT");
+    goog.dom.TagName.RTC = new goog.dom.TagName("RTC");
+    goog.dom.TagName.RUBY = new goog.dom.TagName("RUBY");
+    goog.dom.TagName.S = new goog.dom.TagName("S");
+    goog.dom.TagName.SAMP = new goog.dom.TagName("SAMP");
+    goog.dom.TagName.SCRIPT = new goog.dom.TagName("SCRIPT");
+    goog.dom.TagName.SECTION = new goog.dom.TagName("SECTION");
+    goog.dom.TagName.SELECT = new goog.dom.TagName("SELECT");
+    goog.dom.TagName.SMALL = new goog.dom.TagName("SMALL");
+    goog.dom.TagName.SOURCE = new goog.dom.TagName("SOURCE");
+    goog.dom.TagName.SPAN = new goog.dom.TagName("SPAN");
+    goog.dom.TagName.STRIKE = new goog.dom.TagName("STRIKE");
+    goog.dom.TagName.STRONG = new goog.dom.TagName("STRONG");
+    goog.dom.TagName.STYLE = new goog.dom.TagName("STYLE");
+    goog.dom.TagName.SUB = new goog.dom.TagName("SUB");
+    goog.dom.TagName.SUMMARY = new goog.dom.TagName("SUMMARY");
+    goog.dom.TagName.SUP = new goog.dom.TagName("SUP");
+    goog.dom.TagName.SVG = new goog.dom.TagName("SVG");
+    goog.dom.TagName.TABLE = new goog.dom.TagName("TABLE");
+    goog.dom.TagName.TBODY = new goog.dom.TagName("TBODY");
+    goog.dom.TagName.TD = new goog.dom.TagName("TD");
+    goog.dom.TagName.TEMPLATE = new goog.dom.TagName("TEMPLATE");
+    goog.dom.TagName.TEXTAREA = new goog.dom.TagName("TEXTAREA");
+    goog.dom.TagName.TFOOT = new goog.dom.TagName("TFOOT");
+    goog.dom.TagName.TH = new goog.dom.TagName("TH");
+    goog.dom.TagName.THEAD = new goog.dom.TagName("THEAD");
+    goog.dom.TagName.TIME = new goog.dom.TagName("TIME");
+    goog.dom.TagName.TITLE = new goog.dom.TagName("TITLE");
+    goog.dom.TagName.TR = new goog.dom.TagName("TR");
+    goog.dom.TagName.TRACK = new goog.dom.TagName("TRACK");
+    goog.dom.TagName.TT = new goog.dom.TagName("TT");
+    goog.dom.TagName.U = new goog.dom.TagName("U");
+    goog.dom.TagName.UL = new goog.dom.TagName("UL");
+    goog.dom.TagName.VAR = new goog.dom.TagName("VAR");
+    goog.dom.TagName.VIDEO = new goog.dom.TagName("VIDEO");
+    goog.dom.TagName.WBR = new goog.dom.TagName("WBR");
+    goog.dom.tags = {};
+    goog.dom.tags.VOID_TAGS_ = {
+      area: !0,
+      base: !0,
+      br: !0,
+      col: !0,
+      command: !0,
+      embed: !0,
+      hr: !0,
+      img: !0,
+      input: !0,
+      keygen: !0,
+      link: !0,
+      meta: !0,
+      param: !0,
+      source: !0,
+      track: !0,
+      wbr: !0
+    };
+
+    goog.dom.tags.isVoidTag = function (a) {
+      return !0 === goog.dom.tags.VOID_TAGS_[a];
+    };
+
+    goog.html = {};
+    goog.html.trustedtypes = {};
+    goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY = goog.TRUSTED_TYPES_POLICY_NAME ? goog.createTrustedTypesPolicy(goog.TRUSTED_TYPES_POLICY_NAME + "#html") : null;
+    goog.string = {};
+
+    goog.string.TypedString = function () {};
+
+    goog.string.Const = function (a, b) {
+      this.stringConstValueWithSecurityContract__googStringSecurityPrivate_ = a === goog.string.Const.GOOG_STRING_CONSTRUCTOR_TOKEN_PRIVATE_ && b || "";
+      this.STRING_CONST_TYPE_MARKER__GOOG_STRING_SECURITY_PRIVATE_ = goog.string.Const.TYPE_MARKER_;
+    };
+
+    goog.string.Const.prototype.implementsGoogStringTypedString = !0;
+
+    goog.string.Const.prototype.getTypedStringValue = function () {
+      return this.stringConstValueWithSecurityContract__googStringSecurityPrivate_;
+    };
+
+    goog.string.Const.prototype.toString = function () {
+      return "Const{" + this.stringConstValueWithSecurityContract__googStringSecurityPrivate_ + "}";
+    };
+
+    goog.string.Const.unwrap = function (a) {
+      if (a instanceof goog.string.Const && a.constructor === goog.string.Const && a.STRING_CONST_TYPE_MARKER__GOOG_STRING_SECURITY_PRIVATE_ === goog.string.Const.TYPE_MARKER_) return a.stringConstValueWithSecurityContract__googStringSecurityPrivate_;
+      goog.asserts.fail("expected object of type Const, got '" + a + "'");
+      return "type_error:Const";
+    };
+
+    goog.string.Const.from = function (a) {
+      return new goog.string.Const(goog.string.Const.GOOG_STRING_CONSTRUCTOR_TOKEN_PRIVATE_, a);
+    };
+
+    goog.string.Const.TYPE_MARKER_ = {};
+    goog.string.Const.GOOG_STRING_CONSTRUCTOR_TOKEN_PRIVATE_ = {};
+    goog.string.Const.EMPTY = goog.string.Const.from("");
+
+    goog.html.SafeScript = function () {
+      this.privateDoNotAccessOrElseSafeScriptWrappedValue_ = "";
+      this.SAFE_SCRIPT_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = goog.html.SafeScript.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_;
+    };
+
+    goog.html.SafeScript.prototype.implementsGoogStringTypedString = !0;
+    goog.html.SafeScript.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = {};
+
+    goog.html.SafeScript.fromConstant = function (a) {
+      a = goog.string.Const.unwrap(a);
+      return 0 === a.length ? goog.html.SafeScript.EMPTY : goog.html.SafeScript.createSafeScriptSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeScript.fromConstantAndArgs = function (a, b) {
+      for (var c = [], d = 1; d < arguments.length; d++) {
+        c.push(goog.html.SafeScript.stringify_(arguments[d]));
+      }
+
+      return goog.html.SafeScript.createSafeScriptSecurityPrivateDoNotAccessOrElse("(" + goog.string.Const.unwrap(a) + ")(" + c.join(", ") + ");");
+    };
+
+    goog.html.SafeScript.fromJson = function (a) {
+      return goog.html.SafeScript.createSafeScriptSecurityPrivateDoNotAccessOrElse(goog.html.SafeScript.stringify_(a));
+    };
+
+    goog.html.SafeScript.prototype.getTypedStringValue = function () {
+      return this.privateDoNotAccessOrElseSafeScriptWrappedValue_.toString();
+    };
+
+    goog.DEBUG && (goog.html.SafeScript.prototype.toString = function () {
+      return "SafeScript{" + this.privateDoNotAccessOrElseSafeScriptWrappedValue_ + "}";
+    });
+
+    goog.html.SafeScript.unwrap = function (a) {
+      return goog.html.SafeScript.unwrapTrustedScript(a).toString();
+    };
+
+    goog.html.SafeScript.unwrapTrustedScript = function (a) {
+      if (a instanceof goog.html.SafeScript && a.constructor === goog.html.SafeScript && a.SAFE_SCRIPT_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ === goog.html.SafeScript.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_) return a.privateDoNotAccessOrElseSafeScriptWrappedValue_;
+      goog.asserts.fail("expected object of type SafeScript, got '" + a + "' of type " + goog.typeOf(a));
+      return "type_error:SafeScript";
+    };
+
+    goog.html.SafeScript.stringify_ = function (a) {
+      return JSON.stringify(a).replace(/</g, "\\x3c");
+    };
+
+    goog.html.SafeScript.createSafeScriptSecurityPrivateDoNotAccessOrElse = function (a) {
+      return new goog.html.SafeScript().initSecurityPrivateDoNotAccessOrElse_(a);
+    };
+
+    goog.html.SafeScript.prototype.initSecurityPrivateDoNotAccessOrElse_ = function (a) {
+      this.privateDoNotAccessOrElseSafeScriptWrappedValue_ = goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY ? goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY.createScript(a) : a;
+      return this;
+    };
+
+    goog.html.SafeScript.EMPTY = goog.html.SafeScript.createSafeScriptSecurityPrivateDoNotAccessOrElse("");
+    goog.fs = {};
+    goog.fs.url = {};
+
+    goog.fs.url.createObjectUrl = function (a) {
+      return goog.fs.url.getUrlObject_().createObjectURL(a);
+    };
+
+    goog.fs.url.revokeObjectUrl = function (a) {
+      goog.fs.url.getUrlObject_().revokeObjectURL(a);
+    };
+
+    goog.fs.url.getUrlObject_ = function () {
+      var a = goog.fs.url.findUrlObject_();
+      if (null != a) return a;
+      throw Error("This browser doesn't seem to support blob URLs");
+    };
+
+    goog.fs.url.findUrlObject_ = function () {
+      return goog.isDef(goog.global.URL) && goog.isDef(goog.global.URL.createObjectURL) ? goog.global.URL : goog.isDef(goog.global.webkitURL) && goog.isDef(goog.global.webkitURL.createObjectURL) ? goog.global.webkitURL : goog.isDef(goog.global.createObjectURL) ? goog.global : null;
+    };
+
+    goog.fs.url.browserSupportsObjectUrls = function () {
+      return null != goog.fs.url.findUrlObject_();
+    };
+
+    goog.i18n = {};
+    goog.i18n.bidi = {};
+    goog.i18n.bidi.FORCE_RTL = !1;
+    goog.i18n.bidi.IS_RTL = goog.i18n.bidi.FORCE_RTL || ("ar" == goog.LOCALE.substring(0, 2).toLowerCase() || "fa" == goog.LOCALE.substring(0, 2).toLowerCase() || "he" == goog.LOCALE.substring(0, 2).toLowerCase() || "iw" == goog.LOCALE.substring(0, 2).toLowerCase() || "ps" == goog.LOCALE.substring(0, 2).toLowerCase() || "sd" == goog.LOCALE.substring(0, 2).toLowerCase() || "ug" == goog.LOCALE.substring(0, 2).toLowerCase() || "ur" == goog.LOCALE.substring(0, 2).toLowerCase() || "yi" == goog.LOCALE.substring(0, 2).toLowerCase()) && (2 == goog.LOCALE.length || "-" == goog.LOCALE.substring(2, 3) || "_" == goog.LOCALE.substring(2, 3)) || 3 <= goog.LOCALE.length && "ckb" == goog.LOCALE.substring(0, 3).toLowerCase() && (3 == goog.LOCALE.length || "-" == goog.LOCALE.substring(3, 4) || "_" == goog.LOCALE.substring(3, 4)) || 7 <= goog.LOCALE.length && ("-" == goog.LOCALE.substring(2, 3) || "_" == goog.LOCALE.substring(2, 3)) && ("adlm" == goog.LOCALE.substring(3, 7).toLowerCase() || "arab" == goog.LOCALE.substring(3, 7).toLowerCase() || "hebr" == goog.LOCALE.substring(3, 7).toLowerCase() || "nkoo" == goog.LOCALE.substring(3, 7).toLowerCase() || "rohg" == goog.LOCALE.substring(3, 7).toLowerCase() || "thaa" == goog.LOCALE.substring(3, 7).toLowerCase()) || 8 <= goog.LOCALE.length && ("-" == goog.LOCALE.substring(3, 4) || "_" == goog.LOCALE.substring(3, 4)) && ("adlm" == goog.LOCALE.substring(4, 8).toLowerCase() || "arab" == goog.LOCALE.substring(4, 8).toLowerCase() || "hebr" == goog.LOCALE.substring(4, 8).toLowerCase() || "nkoo" == goog.LOCALE.substring(4, 8).toLowerCase() || "rohg" == goog.LOCALE.substring(4, 8).toLowerCase() || "thaa" == goog.LOCALE.substring(4, 8).toLowerCase());
+    goog.i18n.bidi.Format = {
+      LRE: "\u202A",
+      RLE: "\u202B",
+      PDF: "\u202C",
+      LRM: "\u200E",
+      RLM: "\u200F"
+    };
+    goog.i18n.bidi.Dir = {
+      LTR: 1,
+      RTL: -1,
+      NEUTRAL: 0
+    };
+    goog.i18n.bidi.RIGHT = "right";
+    goog.i18n.bidi.LEFT = "left";
+    goog.i18n.bidi.I18N_RIGHT = goog.i18n.bidi.IS_RTL ? goog.i18n.bidi.LEFT : goog.i18n.bidi.RIGHT;
+    goog.i18n.bidi.I18N_LEFT = goog.i18n.bidi.IS_RTL ? goog.i18n.bidi.RIGHT : goog.i18n.bidi.LEFT;
+
+    goog.i18n.bidi.toDir = function (a, b) {
+      return "number" == typeof a ? 0 < a ? goog.i18n.bidi.Dir.LTR : 0 > a ? goog.i18n.bidi.Dir.RTL : b ? null : goog.i18n.bidi.Dir.NEUTRAL : null == a ? null : a ? goog.i18n.bidi.Dir.RTL : goog.i18n.bidi.Dir.LTR;
+    };
+
+    goog.i18n.bidi.ltrChars_ = "A-Za-z\xC0-\xD6\xD8-\xF6\xF8-\u02B8\u0300-\u0590\u0900-\u1FFF\u200E\u2C00-\uD801\uD804-\uD839\uD83C-\uDBFF\uF900-\uFB1C\uFE00-\uFE6F\uFEFD-\uFFFF";
+    goog.i18n.bidi.rtlChars_ = "\u0591-\u06EF\u06FA-\u08FF\u200F\uD802-\uD803\uD83A-\uD83B\uFB1D-\uFDFF\uFE70-\uFEFC";
+    goog.i18n.bidi.htmlSkipReg_ = /<[^>]*>|&[^;]+;/g;
+
+    goog.i18n.bidi.stripHtmlIfNeeded_ = function (a, b) {
+      return b ? a.replace(goog.i18n.bidi.htmlSkipReg_, "") : a;
+    };
+
+    goog.i18n.bidi.rtlCharReg_ = new RegExp("[" + goog.i18n.bidi.rtlChars_ + "]");
+    goog.i18n.bidi.ltrCharReg_ = new RegExp("[" + goog.i18n.bidi.ltrChars_ + "]");
+
+    goog.i18n.bidi.hasAnyRtl = function (a, b) {
+      return goog.i18n.bidi.rtlCharReg_.test(goog.i18n.bidi.stripHtmlIfNeeded_(a, b));
+    };
+
+    goog.i18n.bidi.hasRtlChar = goog.i18n.bidi.hasAnyRtl;
+
+    goog.i18n.bidi.hasAnyLtr = function (a, b) {
+      return goog.i18n.bidi.ltrCharReg_.test(goog.i18n.bidi.stripHtmlIfNeeded_(a, b));
+    };
+
+    goog.i18n.bidi.ltrRe_ = new RegExp("^[" + goog.i18n.bidi.ltrChars_ + "]");
+    goog.i18n.bidi.rtlRe_ = new RegExp("^[" + goog.i18n.bidi.rtlChars_ + "]");
+
+    goog.i18n.bidi.isRtlChar = function (a) {
+      return goog.i18n.bidi.rtlRe_.test(a);
+    };
+
+    goog.i18n.bidi.isLtrChar = function (a) {
+      return goog.i18n.bidi.ltrRe_.test(a);
+    };
+
+    goog.i18n.bidi.isNeutralChar = function (a) {
+      return !goog.i18n.bidi.isLtrChar(a) && !goog.i18n.bidi.isRtlChar(a);
+    };
+
+    goog.i18n.bidi.ltrDirCheckRe_ = new RegExp("^[^" + goog.i18n.bidi.rtlChars_ + "]*[" + goog.i18n.bidi.ltrChars_ + "]");
+    goog.i18n.bidi.rtlDirCheckRe_ = new RegExp("^[^" + goog.i18n.bidi.ltrChars_ + "]*[" + goog.i18n.bidi.rtlChars_ + "]");
+
+    goog.i18n.bidi.startsWithRtl = function (a, b) {
+      return goog.i18n.bidi.rtlDirCheckRe_.test(goog.i18n.bidi.stripHtmlIfNeeded_(a, b));
+    };
+
+    goog.i18n.bidi.isRtlText = goog.i18n.bidi.startsWithRtl;
+
+    goog.i18n.bidi.startsWithLtr = function (a, b) {
+      return goog.i18n.bidi.ltrDirCheckRe_.test(goog.i18n.bidi.stripHtmlIfNeeded_(a, b));
+    };
+
+    goog.i18n.bidi.isLtrText = goog.i18n.bidi.startsWithLtr;
+    goog.i18n.bidi.isRequiredLtrRe_ = /^http:\/\/.*/;
+
+    goog.i18n.bidi.isNeutralText = function (a, b) {
+      a = goog.i18n.bidi.stripHtmlIfNeeded_(a, b);
+      return goog.i18n.bidi.isRequiredLtrRe_.test(a) || !goog.i18n.bidi.hasAnyLtr(a) && !goog.i18n.bidi.hasAnyRtl(a);
+    };
+
+    goog.i18n.bidi.ltrExitDirCheckRe_ = new RegExp("[" + goog.i18n.bidi.ltrChars_ + "][^" + goog.i18n.bidi.rtlChars_ + "]*$");
+    goog.i18n.bidi.rtlExitDirCheckRe_ = new RegExp("[" + goog.i18n.bidi.rtlChars_ + "][^" + goog.i18n.bidi.ltrChars_ + "]*$");
+
+    goog.i18n.bidi.endsWithLtr = function (a, b) {
+      return goog.i18n.bidi.ltrExitDirCheckRe_.test(goog.i18n.bidi.stripHtmlIfNeeded_(a, b));
+    };
+
+    goog.i18n.bidi.isLtrExitText = goog.i18n.bidi.endsWithLtr;
+
+    goog.i18n.bidi.endsWithRtl = function (a, b) {
+      return goog.i18n.bidi.rtlExitDirCheckRe_.test(goog.i18n.bidi.stripHtmlIfNeeded_(a, b));
+    };
+
+    goog.i18n.bidi.isRtlExitText = goog.i18n.bidi.endsWithRtl;
+    goog.i18n.bidi.rtlLocalesRe_ = /^(ar|ckb|dv|he|iw|fa|nqo|ps|sd|ug|ur|yi|.*[-_](Adlm|Arab|Hebr|Nkoo|Rohg|Thaa))(?!.*[-_](Latn|Cyrl)($|-|_))($|-|_)/i;
+
+    goog.i18n.bidi.isRtlLanguage = function (a) {
+      return goog.i18n.bidi.rtlLocalesRe_.test(a);
+    };
+
+    goog.i18n.bidi.bracketGuardTextRe_ = /(\(.*?\)+)|(\[.*?\]+)|(\{.*?\}+)|(<.*?>+)/g;
+
+    goog.i18n.bidi.guardBracketInText = function (a, b) {
+      b = (void 0 === b ? goog.i18n.bidi.hasAnyRtl(a) : b) ? goog.i18n.bidi.Format.RLM : goog.i18n.bidi.Format.LRM;
+      return a.replace(goog.i18n.bidi.bracketGuardTextRe_, b + "$&" + b);
+    };
+
+    goog.i18n.bidi.enforceRtlInHtml = function (a) {
+      return "<" == a.charAt(0) ? a.replace(/<\w+/, "$& dir=rtl") : "\n<span dir=rtl>" + a + "</span>";
+    };
+
+    goog.i18n.bidi.enforceRtlInText = function (a) {
+      return goog.i18n.bidi.Format.RLE + a + goog.i18n.bidi.Format.PDF;
+    };
+
+    goog.i18n.bidi.enforceLtrInHtml = function (a) {
+      return "<" == a.charAt(0) ? a.replace(/<\w+/, "$& dir=ltr") : "\n<span dir=ltr>" + a + "</span>";
+    };
+
+    goog.i18n.bidi.enforceLtrInText = function (a) {
+      return goog.i18n.bidi.Format.LRE + a + goog.i18n.bidi.Format.PDF;
+    };
+
+    goog.i18n.bidi.dimensionsRe_ = /:\s*([.\d][.\w]*)\s+([.\d][.\w]*)\s+([.\d][.\w]*)\s+([.\d][.\w]*)/g;
+    goog.i18n.bidi.leftRe_ = /left/gi;
+    goog.i18n.bidi.rightRe_ = /right/gi;
+    goog.i18n.bidi.tempRe_ = /%%%%/g;
+
+    goog.i18n.bidi.mirrorCSS = function (a) {
+      return a.replace(goog.i18n.bidi.dimensionsRe_, ":$1 $4 $3 $2").replace(goog.i18n.bidi.leftRe_, "%%%%").replace(goog.i18n.bidi.rightRe_, goog.i18n.bidi.LEFT).replace(goog.i18n.bidi.tempRe_, goog.i18n.bidi.RIGHT);
+    };
+
+    goog.i18n.bidi.doubleQuoteSubstituteRe_ = /([\u0591-\u05f2])"/g;
+    goog.i18n.bidi.singleQuoteSubstituteRe_ = /([\u0591-\u05f2])'/g;
+
+    goog.i18n.bidi.normalizeHebrewQuote = function (a) {
+      return a.replace(goog.i18n.bidi.doubleQuoteSubstituteRe_, "$1\u05F4").replace(goog.i18n.bidi.singleQuoteSubstituteRe_, "$1\u05F3");
+    };
+
+    goog.i18n.bidi.wordSeparatorRe_ = /\s+/;
+    goog.i18n.bidi.hasNumeralsRe_ = /[\d\u06f0-\u06f9]/;
+    goog.i18n.bidi.rtlDetectionThreshold_ = .4;
+
+    goog.i18n.bidi.estimateDirection = function (a, b) {
+      var c = 0,
+          d = 0,
+          e = !1;
+      a = goog.i18n.bidi.stripHtmlIfNeeded_(a, b).split(goog.i18n.bidi.wordSeparatorRe_);
+
+      for (b = 0; b < a.length; b++) {
+        var f = a[b];
+        goog.i18n.bidi.startsWithRtl(f) ? (c++, d++) : goog.i18n.bidi.isRequiredLtrRe_.test(f) ? e = !0 : goog.i18n.bidi.hasAnyLtr(f) ? d++ : goog.i18n.bidi.hasNumeralsRe_.test(f) && (e = !0);
+      }
+
+      return 0 == d ? e ? goog.i18n.bidi.Dir.LTR : goog.i18n.bidi.Dir.NEUTRAL : c / d > goog.i18n.bidi.rtlDetectionThreshold_ ? goog.i18n.bidi.Dir.RTL : goog.i18n.bidi.Dir.LTR;
+    };
+
+    goog.i18n.bidi.detectRtlDirectionality = function (a, b) {
+      return goog.i18n.bidi.estimateDirection(a, b) == goog.i18n.bidi.Dir.RTL;
+    };
+
+    goog.i18n.bidi.setElementDirAndAlign = function (a, b) {
+      a && (b = goog.i18n.bidi.toDir(b)) && (a.style.textAlign = b == goog.i18n.bidi.Dir.RTL ? goog.i18n.bidi.RIGHT : goog.i18n.bidi.LEFT, a.dir = b == goog.i18n.bidi.Dir.RTL ? "rtl" : "ltr");
+    };
+
+    goog.i18n.bidi.setElementDirByTextDirectionality = function (a, b) {
+      switch (goog.i18n.bidi.estimateDirection(b)) {
+        case goog.i18n.bidi.Dir.LTR:
+          a.dir = "ltr";
+          break;
+
+        case goog.i18n.bidi.Dir.RTL:
+          a.dir = "rtl";
+          break;
+
+        default:
+          a.removeAttribute("dir");
+      }
+    };
+
+    goog.i18n.bidi.DirectionalString = function () {};
+
+    goog.html.TrustedResourceUrl = function () {
+      this.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue_ = "";
+      this.trustedURL_ = null;
+      this.TRUSTED_RESOURCE_URL_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = goog.html.TrustedResourceUrl.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_;
+    };
+
+    goog.html.TrustedResourceUrl.prototype.implementsGoogStringTypedString = !0;
+
+    goog.html.TrustedResourceUrl.prototype.getTypedStringValue = function () {
+      return this.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue_.toString();
+    };
+
+    goog.html.TrustedResourceUrl.prototype.implementsGoogI18nBidiDirectionalString = !0;
+
+    goog.html.TrustedResourceUrl.prototype.getDirection = function () {
+      return goog.i18n.bidi.Dir.LTR;
+    };
+
+    goog.html.TrustedResourceUrl.prototype.cloneWithParams = function (a, b) {
+      var c = goog.html.TrustedResourceUrl.unwrap(this);
+      c = goog.html.TrustedResourceUrl.URL_PARAM_PARSER_.exec(c);
+      var d = c[3] || "";
+      return goog.html.TrustedResourceUrl.createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse(c[1] + goog.html.TrustedResourceUrl.stringifyParams_("?", c[2] || "", a) + goog.html.TrustedResourceUrl.stringifyParams_("#", d, b));
+    };
+
+    goog.DEBUG && (goog.html.TrustedResourceUrl.prototype.toString = function () {
+      return "TrustedResourceUrl{" + this.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue_ + "}";
+    });
+
+    goog.html.TrustedResourceUrl.unwrap = function (a) {
+      return goog.html.TrustedResourceUrl.unwrapTrustedScriptURL(a).toString();
+    };
+
+    goog.html.TrustedResourceUrl.unwrapTrustedScriptURL = function (a) {
+      if (a instanceof goog.html.TrustedResourceUrl && a.constructor === goog.html.TrustedResourceUrl && a.TRUSTED_RESOURCE_URL_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ === goog.html.TrustedResourceUrl.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_) return a.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue_;
+      goog.asserts.fail("expected object of type TrustedResourceUrl, got '" + a + "' of type " + goog.typeOf(a));
+      return "type_error:TrustedResourceUrl";
+    };
+
+    goog.html.TrustedResourceUrl.unwrapTrustedURL = function (a) {
+      return a.trustedURL_ ? a.trustedURL_ : goog.html.TrustedResourceUrl.unwrap(a);
+    };
+
+    goog.html.TrustedResourceUrl.format = function (a, b) {
+      var c = goog.string.Const.unwrap(a);
+      if (!goog.html.TrustedResourceUrl.BASE_URL_.test(c)) throw Error("Invalid TrustedResourceUrl format: " + c);
+      a = c.replace(goog.html.TrustedResourceUrl.FORMAT_MARKER_, function (a, e) {
+        if (!Object.prototype.hasOwnProperty.call(b, e)) throw Error('Found marker, "' + e + '", in format string, "' + c + '", but no valid label mapping found in args: ' + JSON.stringify(b));
+        a = b[e];
+        return a instanceof goog.string.Const ? goog.string.Const.unwrap(a) : encodeURIComponent(String(a));
+      });
+      return goog.html.TrustedResourceUrl.createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.TrustedResourceUrl.FORMAT_MARKER_ = /%{(\w+)}/g;
+    goog.html.TrustedResourceUrl.BASE_URL_ = /^((https:)?\/\/[0-9a-z.:[\]-]+\/|\/[^/\\]|[^:/\\%]+\/|[^:/\\%]*[?#]|about:blank#)/i;
+    goog.html.TrustedResourceUrl.URL_PARAM_PARSER_ = /^([^?#]*)(\?[^#]*)?(#[\s\S]*)?/;
+
+    goog.html.TrustedResourceUrl.formatWithParams = function (a, b, c, d) {
+      return goog.html.TrustedResourceUrl.format(a, b).cloneWithParams(c, d);
+    };
+
+    goog.html.TrustedResourceUrl.fromConstant = function (a) {
+      return goog.html.TrustedResourceUrl.createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse(goog.string.Const.unwrap(a));
+    };
+
+    goog.html.TrustedResourceUrl.fromConstants = function (a) {
+      for (var b = "", c = 0; c < a.length; c++) {
+        b += goog.string.Const.unwrap(a[c]);
+      }
+
+      return goog.html.TrustedResourceUrl.createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.TrustedResourceUrl.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = {};
+
+    goog.html.TrustedResourceUrl.createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse = function (a) {
+      var b = new goog.html.TrustedResourceUrl();
+      b.privateDoNotAccessOrElseTrustedResourceUrlWrappedValue_ = goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY ? goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY.createScriptURL(a) : a;
+      goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY && (b.trustedURL_ = goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY.createURL(a));
+      return b;
+    };
+
+    goog.html.TrustedResourceUrl.stringifyParams_ = function (a, b, c) {
+      if (null == c) return b;
+      if (goog.isString(c)) return c ? a + encodeURIComponent(c) : "";
+
+      for (var d in c) {
+        var e = c[d];
+        e = goog.isArray(e) ? e : [e];
+
+        for (var f = 0; f < e.length; f++) {
+          var g = e[f];
+          null != g && (b || (b = a), b += (b.length > a.length ? "&" : "") + encodeURIComponent(d) + "=" + encodeURIComponent(String(g)));
+        }
+      }
+
+      return b;
+    };
+
+    goog.string.internal = {};
+
+    goog.string.internal.startsWith = function (a, b) {
+      return 0 == a.lastIndexOf(b, 0);
+    };
+
+    goog.string.internal.endsWith = function (a, b) {
+      var c = a.length - b.length;
+      return 0 <= c && a.indexOf(b, c) == c;
+    };
+
+    goog.string.internal.caseInsensitiveStartsWith = function (a, b) {
+      return 0 == goog.string.internal.caseInsensitiveCompare(b, a.substr(0, b.length));
+    };
+
+    goog.string.internal.caseInsensitiveEndsWith = function (a, b) {
+      return 0 == goog.string.internal.caseInsensitiveCompare(b, a.substr(a.length - b.length, b.length));
+    };
+
+    goog.string.internal.caseInsensitiveEquals = function (a, b) {
+      return a.toLowerCase() == b.toLowerCase();
+    };
+
+    goog.string.internal.isEmptyOrWhitespace = function (a) {
+      return /^[\s\xa0]*$/.test(a);
+    };
+
+    goog.string.internal.trim = goog.TRUSTED_SITE && String.prototype.trim ? function (a) {
+      return a.trim();
+    } : function (a) {
+      return /^[\s\xa0]*([\s\S]*?)[\s\xa0]*$/.exec(a)[1];
+    };
+
+    goog.string.internal.caseInsensitiveCompare = function (a, b) {
+      a = String(a).toLowerCase();
+      b = String(b).toLowerCase();
+      return a < b ? -1 : a == b ? 0 : 1;
+    };
+
+    goog.string.internal.newLineToBr = function (a, b) {
+      return a.replace(/(\r\n|\r|\n)/g, b ? "<br />" : "<br>");
+    };
+
+    goog.string.internal.htmlEscape = function (a, b) {
+      if (b) a = a.replace(goog.string.internal.AMP_RE_, "&amp;").replace(goog.string.internal.LT_RE_, "&lt;").replace(goog.string.internal.GT_RE_, "&gt;").replace(goog.string.internal.QUOT_RE_, "&quot;").replace(goog.string.internal.SINGLE_QUOTE_RE_, "&#39;").replace(goog.string.internal.NULL_RE_, "&#0;");else {
+        if (!goog.string.internal.ALL_RE_.test(a)) return a;
+        -1 != a.indexOf("&") && (a = a.replace(goog.string.internal.AMP_RE_, "&amp;"));
+        -1 != a.indexOf("<") && (a = a.replace(goog.string.internal.LT_RE_, "&lt;"));
+        -1 != a.indexOf(">") && (a = a.replace(goog.string.internal.GT_RE_, "&gt;"));
+        -1 != a.indexOf('"') && (a = a.replace(goog.string.internal.QUOT_RE_, "&quot;"));
+        -1 != a.indexOf("'") && (a = a.replace(goog.string.internal.SINGLE_QUOTE_RE_, "&#39;"));
+        -1 != a.indexOf("\x00") && (a = a.replace(goog.string.internal.NULL_RE_, "&#0;"));
+      }
+      return a;
+    };
+
+    goog.string.internal.AMP_RE_ = /&/g;
+    goog.string.internal.LT_RE_ = /</g;
+    goog.string.internal.GT_RE_ = />/g;
+    goog.string.internal.QUOT_RE_ = /"/g;
+    goog.string.internal.SINGLE_QUOTE_RE_ = /'/g;
+    goog.string.internal.NULL_RE_ = /\x00/g;
+    goog.string.internal.ALL_RE_ = /[\x00&<>"']/;
+
+    goog.string.internal.whitespaceEscape = function (a, b) {
+      return goog.string.internal.newLineToBr(a.replace(/  /g, " &#160;"), b);
+    };
+
+    goog.string.internal.contains = function (a, b) {
+      return -1 != a.indexOf(b);
+    };
+
+    goog.string.internal.caseInsensitiveContains = function (a, b) {
+      return goog.string.internal.contains(a.toLowerCase(), b.toLowerCase());
+    };
+
+    goog.string.internal.compareVersions = function (a, b) {
+      var c = 0;
+      a = goog.string.internal.trim(String(a)).split(".");
+      b = goog.string.internal.trim(String(b)).split(".");
+
+      for (var d = Math.max(a.length, b.length), e = 0; 0 == c && e < d; e++) {
+        var f = a[e] || "",
+            g = b[e] || "";
+
+        do {
+          f = /(\d*)(\D*)(.*)/.exec(f) || ["", "", "", ""];
+          g = /(\d*)(\D*)(.*)/.exec(g) || ["", "", "", ""];
+          if (0 == f[0].length && 0 == g[0].length) break;
+          c = 0 == f[1].length ? 0 : parseInt(f[1], 10);
+          var h = 0 == g[1].length ? 0 : parseInt(g[1], 10);
+          c = goog.string.internal.compareElements_(c, h) || goog.string.internal.compareElements_(0 == f[2].length, 0 == g[2].length) || goog.string.internal.compareElements_(f[2], g[2]);
+          f = f[3];
+          g = g[3];
+        } while (0 == c);
+      }
+
+      return c;
+    };
+
+    goog.string.internal.compareElements_ = function (a, b) {
+      return a < b ? -1 : a > b ? 1 : 0;
+    };
+
+    goog.html.SafeUrl = function () {
+      this.privateDoNotAccessOrElseSafeUrlWrappedValue_ = "";
+      this.SAFE_URL_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = goog.html.SafeUrl.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_;
+    };
+
+    goog.html.SafeUrl.INNOCUOUS_STRING = "about:invalid#zClosurez";
+    goog.html.SafeUrl.prototype.implementsGoogStringTypedString = !0;
+
+    goog.html.SafeUrl.prototype.getTypedStringValue = function () {
+      return this.privateDoNotAccessOrElseSafeUrlWrappedValue_.toString();
+    };
+
+    goog.html.SafeUrl.prototype.implementsGoogI18nBidiDirectionalString = !0;
+
+    goog.html.SafeUrl.prototype.getDirection = function () {
+      return goog.i18n.bidi.Dir.LTR;
+    };
+
+    goog.DEBUG && (goog.html.SafeUrl.prototype.toString = function () {
+      return "SafeUrl{" + this.privateDoNotAccessOrElseSafeUrlWrappedValue_ + "}";
+    });
+
+    goog.html.SafeUrl.unwrap = function (a) {
+      return goog.html.SafeUrl.unwrapTrustedURL(a).toString();
+    };
+
+    goog.html.SafeUrl.unwrapTrustedURL = function (a) {
+      if (a instanceof goog.html.SafeUrl && a.constructor === goog.html.SafeUrl && a.SAFE_URL_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ === goog.html.SafeUrl.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_) return a.privateDoNotAccessOrElseSafeUrlWrappedValue_;
+      goog.asserts.fail("expected object of type SafeUrl, got '" + a + "' of type " + goog.typeOf(a));
+      return "type_error:SafeUrl";
+    };
+
+    goog.html.SafeUrl.fromConstant = function (a) {
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(goog.string.Const.unwrap(a));
+    };
+
+    goog.html.SAFE_MIME_TYPE_PATTERN_ = /^(?:audio\/(?:3gpp2|3gpp|aac|L16|midi|mp3|mp4|mpeg|oga|ogg|opus|x-m4a|x-wav|wav|webm)|image\/(?:bmp|gif|jpeg|jpg|png|tiff|webp|x-icon)|text\/csv|video\/(?:mpeg|mp4|ogg|webm|quicktime))(?:;\w+=(?:\w+|"[\w;=]+"))*$/i;
+
+    goog.html.SafeUrl.isSafeMimeType = function (a) {
+      return goog.html.SAFE_MIME_TYPE_PATTERN_.test(a);
+    };
+
+    goog.html.SafeUrl.fromBlob = function (a) {
+      a = goog.html.SAFE_MIME_TYPE_PATTERN_.test(a.type) ? goog.fs.url.createObjectUrl(a) : goog.html.SafeUrl.INNOCUOUS_STRING;
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.DATA_URL_PATTERN_ = /^data:([^,]*);base64,[a-z0-9+\/]+=*$/i;
+
+    goog.html.SafeUrl.fromDataUrl = function (a) {
+      a = a.replace(/(%0A|%0D)/g, "");
+      var b = a.match(goog.html.DATA_URL_PATTERN_);
+      b = b && goog.html.SAFE_MIME_TYPE_PATTERN_.test(b[1]);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(b ? a : goog.html.SafeUrl.INNOCUOUS_STRING);
+    };
+
+    goog.html.SafeUrl.fromTelUrl = function (a) {
+      goog.string.internal.caseInsensitiveStartsWith(a, "tel:") || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SIP_URL_PATTERN_ = /^sip[s]?:[+a-z0-9_.!$%&'*\/=^`{|}~-]+@([a-z0-9-]+\.)+[a-z0-9]{2,63}$/i;
+
+    goog.html.SafeUrl.fromSipUrl = function (a) {
+      goog.html.SIP_URL_PATTERN_.test(decodeURIComponent(a)) || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.fromFacebookMessengerUrl = function (a) {
+      goog.string.internal.caseInsensitiveStartsWith(a, "fb-messenger://share") || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.fromWhatsAppUrl = function (a) {
+      goog.string.internal.caseInsensitiveStartsWith(a, "whatsapp://send") || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.fromSmsUrl = function (a) {
+      goog.string.internal.caseInsensitiveStartsWith(a, "sms:") && goog.html.SafeUrl.isSmsUrlBodyValid_(a) || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.isSmsUrlBodyValid_ = function (a) {
+      var b = a.indexOf("#");
+      0 < b && (a = a.substring(0, b));
+      b = a.match(/[?&]body=/gi);
+      if (!b) return !0;
+      if (1 < b.length) return !1;
+      a = a.match(/[?&]body=([^&]*)/)[1];
+      if (!a) return !0;
+
+      try {
+        decodeURIComponent(a);
+      } catch (c) {
+        return !1;
+      }
+
+      return /^(?:[a-z0-9\-_.~]|%[0-9a-f]{2})+$/i.test(a);
+    };
+
+    goog.html.SafeUrl.fromSshUrl = function (a) {
+      goog.string.internal.caseInsensitiveStartsWith(a, "ssh://") || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.sanitizeChromeExtensionUrl = function (a, b) {
+      return goog.html.SafeUrl.sanitizeExtensionUrl_(/^chrome-extension:\/\/([^\/]+)\//, a, b);
+    };
+
+    goog.html.SafeUrl.sanitizeFirefoxExtensionUrl = function (a, b) {
+      return goog.html.SafeUrl.sanitizeExtensionUrl_(/^moz-extension:\/\/([^\/]+)\//, a, b);
+    };
+
+    goog.html.SafeUrl.sanitizeEdgeExtensionUrl = function (a, b) {
+      return goog.html.SafeUrl.sanitizeExtensionUrl_(/^ms-browser-extension:\/\/([^\/]+)\//, a, b);
+    };
+
+    goog.html.SafeUrl.sanitizeExtensionUrl_ = function (a, b, c) {
+      (a = a.exec(b)) ? (a = a[1], -1 == (c instanceof goog.string.Const ? [goog.string.Const.unwrap(c)] : c.map(function (a) {
+        return goog.string.Const.unwrap(a);
+      })).indexOf(a) && (b = goog.html.SafeUrl.INNOCUOUS_STRING)) : b = goog.html.SafeUrl.INNOCUOUS_STRING;
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.SafeUrl.fromTrustedResourceUrl = function (a) {
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(goog.html.TrustedResourceUrl.unwrap(a));
+    };
+
+    goog.html.SAFE_URL_PATTERN_ = /^(?:(?:https?|mailto|ftp):|[^:/?#]*(?:[/?#]|$))/i;
+    goog.html.SafeUrl.SAFE_URL_PATTERN = goog.html.SAFE_URL_PATTERN_;
+
+    goog.html.SafeUrl.sanitize = function (a) {
+      if (a instanceof goog.html.SafeUrl) return a;
+      a = "object" == _typeof(a) && a.implementsGoogStringTypedString ? a.getTypedStringValue() : String(a);
+      goog.html.SAFE_URL_PATTERN_.test(a) || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.sanitizeAssertUnchanged = function (a, b) {
+      if (a instanceof goog.html.SafeUrl) return a;
+      a = "object" == _typeof(a) && a.implementsGoogStringTypedString ? a.getTypedStringValue() : String(a);
+      if (b && /^data:/i.test(a) && (b = goog.html.SafeUrl.fromDataUrl(a), b.getTypedStringValue() == a)) return b;
+      goog.asserts.assert(goog.html.SAFE_URL_PATTERN_.test(a), "%s does not match the safe URL pattern", a) || (a = goog.html.SafeUrl.INNOCUOUS_STRING);
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeUrl.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = {};
+
+    goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse = function (a) {
+      var b = new goog.html.SafeUrl();
+      b.privateDoNotAccessOrElseSafeUrlWrappedValue_ = goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY ? goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY.createURL(a) : a;
+      return b;
+    };
+
+    goog.html.SafeUrl.ABOUT_BLANK = goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse("about:blank");
+
+    goog.html.SafeStyle = function () {
+      this.privateDoNotAccessOrElseSafeStyleWrappedValue_ = "";
+      this.SAFE_STYLE_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = goog.html.SafeStyle.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_;
+    };
+
+    goog.html.SafeStyle.prototype.implementsGoogStringTypedString = !0;
+    goog.html.SafeStyle.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = {};
+
+    goog.html.SafeStyle.fromConstant = function (a) {
+      a = goog.string.Const.unwrap(a);
+      if (0 === a.length) return goog.html.SafeStyle.EMPTY;
+      goog.asserts.assert(goog.string.internal.endsWith(a, ";"), "Last character of style string is not ';': " + a);
+      goog.asserts.assert(goog.string.internal.contains(a, ":"), "Style string must contain at least one ':', to specify a \"name: value\" pair: " + a);
+      return goog.html.SafeStyle.createSafeStyleSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeStyle.prototype.getTypedStringValue = function () {
+      return this.privateDoNotAccessOrElseSafeStyleWrappedValue_;
+    };
+
+    goog.DEBUG && (goog.html.SafeStyle.prototype.toString = function () {
+      return "SafeStyle{" + this.privateDoNotAccessOrElseSafeStyleWrappedValue_ + "}";
+    });
+
+    goog.html.SafeStyle.unwrap = function (a) {
+      if (a instanceof goog.html.SafeStyle && a.constructor === goog.html.SafeStyle && a.SAFE_STYLE_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ === goog.html.SafeStyle.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_) return a.privateDoNotAccessOrElseSafeStyleWrappedValue_;
+      goog.asserts.fail("expected object of type SafeStyle, got '" + a + "' of type " + goog.typeOf(a));
+      return "type_error:SafeStyle";
+    };
+
+    goog.html.SafeStyle.createSafeStyleSecurityPrivateDoNotAccessOrElse = function (a) {
+      return new goog.html.SafeStyle().initSecurityPrivateDoNotAccessOrElse_(a);
+    };
+
+    goog.html.SafeStyle.prototype.initSecurityPrivateDoNotAccessOrElse_ = function (a) {
+      this.privateDoNotAccessOrElseSafeStyleWrappedValue_ = a;
+      return this;
+    };
+
+    goog.html.SafeStyle.EMPTY = goog.html.SafeStyle.createSafeStyleSecurityPrivateDoNotAccessOrElse("");
+    goog.html.SafeStyle.INNOCUOUS_STRING = "zClosurez";
+
+    goog.html.SafeStyle.create = function (a) {
+      var b = "",
+          c;
+
+      for (c in a) {
+        if (!/^[-_a-zA-Z0-9]+$/.test(c)) throw Error("Name allows only [-_a-zA-Z0-9], got: " + c);
+        var d = a[c];
+        null != d && (d = goog.isArray(d) ? goog.array.map(d, goog.html.SafeStyle.sanitizePropertyValue_).join(" ") : goog.html.SafeStyle.sanitizePropertyValue_(d), b += c + ":" + d + ";");
+      }
+
+      return b ? goog.html.SafeStyle.createSafeStyleSecurityPrivateDoNotAccessOrElse(b) : goog.html.SafeStyle.EMPTY;
+    };
+
+    goog.html.SafeStyle.sanitizePropertyValue_ = function (a) {
+      if (a instanceof goog.html.SafeUrl) return 'url("' + goog.html.SafeUrl.unwrap(a).replace(/</g, "%3c").replace(/[\\"]/g, "\\$&") + '")';
+      a = a instanceof goog.string.Const ? goog.string.Const.unwrap(a) : goog.html.SafeStyle.sanitizePropertyValueString_(String(a));
+      if (/[{;}]/.test(a)) throw new goog.asserts.AssertionError("Value does not allow [{;}], got: %s.", [a]);
+      return a;
+    };
+
+    goog.html.SafeStyle.sanitizePropertyValueString_ = function (a) {
+      var b = a.replace(goog.html.SafeStyle.FUNCTIONS_RE_, "$1").replace(goog.html.SafeStyle.FUNCTIONS_RE_, "$1").replace(goog.html.SafeStyle.URL_RE_, "url");
+
+      if (goog.html.SafeStyle.VALUE_RE_.test(b)) {
+        if (goog.html.SafeStyle.COMMENT_RE_.test(a)) return goog.asserts.fail("String value disallows comments, got: " + a), goog.html.SafeStyle.INNOCUOUS_STRING;
+        if (!goog.html.SafeStyle.hasBalancedQuotes_(a)) return goog.asserts.fail("String value requires balanced quotes, got: " + a), goog.html.SafeStyle.INNOCUOUS_STRING;
+        if (!goog.html.SafeStyle.hasBalancedSquareBrackets_(a)) return goog.asserts.fail("String value requires balanced square brackets and one identifier per pair of brackets, got: " + a), goog.html.SafeStyle.INNOCUOUS_STRING;
+      } else return goog.asserts.fail("String value allows only " + goog.html.SafeStyle.VALUE_ALLOWED_CHARS_ + " and simple functions, got: " + a), goog.html.SafeStyle.INNOCUOUS_STRING;
+
+      return goog.html.SafeStyle.sanitizeUrl_(a);
+    };
+
+    goog.html.SafeStyle.hasBalancedQuotes_ = function (a) {
+      for (var b = !0, c = !0, d = 0; d < a.length; d++) {
+        var e = a.charAt(d);
+        "'" == e && c ? b = !b : '"' == e && b && (c = !c);
+      }
+
+      return b && c;
+    };
+
+    goog.html.SafeStyle.hasBalancedSquareBrackets_ = function (a) {
+      for (var b = !0, c = /^[-_a-zA-Z0-9]$/, d = 0; d < a.length; d++) {
+        var e = a.charAt(d);
+
+        if ("]" == e) {
+          if (b) return !1;
+          b = !0;
+        } else if ("[" == e) {
+          if (!b) return !1;
+          b = !1;
+        } else if (!b && !c.test(e)) return !1;
+      }
+
+      return b;
+    };
+
+    goog.html.SafeStyle.VALUE_ALLOWED_CHARS_ = "[-,.\"'%_!# a-zA-Z0-9\\[\\]]";
+    goog.html.SafeStyle.VALUE_RE_ = new RegExp("^" + goog.html.SafeStyle.VALUE_ALLOWED_CHARS_ + "+$");
+    goog.html.SafeStyle.URL_RE_ = /\b(url\([ \t\n]*)('[ -&(-\[\]-~]*'|"[ !#-\[\]-~]*"|[!#-&*-\[\]-~]*)([ \t\n]*\))/g;
+    goog.html.SafeStyle.FUNCTIONS_RE_ = /\b(hsl|hsla|rgb|rgba|matrix|calc|minmax|fit-content|repeat|(rotate|scale|translate)(X|Y|Z|3d)?)\([-+*/0-9a-z.%\[\], ]+\)/g;
+    goog.html.SafeStyle.COMMENT_RE_ = /\/\*/;
+
+    goog.html.SafeStyle.sanitizeUrl_ = function (a) {
+      return a.replace(goog.html.SafeStyle.URL_RE_, function (a, c, d, e) {
+        var b = "";
+        d = d.replace(/^(['"])(.*)\1$/, function (a, c, d) {
+          b = c;
+          return d;
+        });
+        a = goog.html.SafeUrl.sanitize(d).getTypedStringValue();
+        return c + b + a + b + e;
+      });
+    };
+
+    goog.html.SafeStyle.concat = function (a) {
+      var b = "",
+          c = function c(a) {
+        goog.isArray(a) ? goog.array.forEach(a, c) : b += goog.html.SafeStyle.unwrap(a);
+      };
+
+      goog.array.forEach(arguments, c);
+      return b ? goog.html.SafeStyle.createSafeStyleSecurityPrivateDoNotAccessOrElse(b) : goog.html.SafeStyle.EMPTY;
+    };
+
+    goog.html.SafeStyleSheet = function () {
+      this.privateDoNotAccessOrElseSafeStyleSheetWrappedValue_ = "";
+      this.SAFE_STYLE_SHEET_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = goog.html.SafeStyleSheet.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_;
+    };
+
+    goog.html.SafeStyleSheet.prototype.implementsGoogStringTypedString = !0;
+    goog.html.SafeStyleSheet.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = {};
+
+    goog.html.SafeStyleSheet.createRule = function (a, b) {
+      if (goog.string.internal.contains(a, "<")) throw Error("Selector does not allow '<', got: " + a);
+      var c = a.replace(/('|")((?!\1)[^\r\n\f\\]|\\[\s\S])*\1/g, "");
+      if (!/^[-_a-zA-Z0-9#.:* ,>+~[\]()=^$|]+$/.test(c)) throw Error("Selector allows only [-_a-zA-Z0-9#.:* ,>+~[\\]()=^$|] and strings, got: " + a);
+      if (!goog.html.SafeStyleSheet.hasBalancedBrackets_(c)) throw Error("() and [] in selector must be balanced, got: " + a);
+      b instanceof goog.html.SafeStyle || (b = goog.html.SafeStyle.create(b));
+      a = a + "{" + goog.html.SafeStyle.unwrap(b).replace(/</g, "\\3C ") + "}";
+      return goog.html.SafeStyleSheet.createSafeStyleSheetSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeStyleSheet.hasBalancedBrackets_ = function (a) {
+      for (var b = {
+        "(": ")",
+        "[": "]"
+      }, c = [], d = 0; d < a.length; d++) {
+        var e = a[d];
+        if (b[e]) c.push(b[e]);else if (goog.object.contains(b, e) && c.pop() != e) return !1;
+      }
+
+      return 0 == c.length;
+    };
+
+    goog.html.SafeStyleSheet.concat = function (a) {
+      var b = "",
+          c = function c(a) {
+        goog.isArray(a) ? goog.array.forEach(a, c) : b += goog.html.SafeStyleSheet.unwrap(a);
+      };
+
+      goog.array.forEach(arguments, c);
+      return goog.html.SafeStyleSheet.createSafeStyleSheetSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.SafeStyleSheet.fromConstant = function (a) {
+      a = goog.string.Const.unwrap(a);
+      if (0 === a.length) return goog.html.SafeStyleSheet.EMPTY;
+      goog.asserts.assert(!goog.string.internal.contains(a, "<"), "Forbidden '<' character in style sheet string: " + a);
+      return goog.html.SafeStyleSheet.createSafeStyleSheetSecurityPrivateDoNotAccessOrElse(a);
+    };
+
+    goog.html.SafeStyleSheet.prototype.getTypedStringValue = function () {
+      return this.privateDoNotAccessOrElseSafeStyleSheetWrappedValue_;
+    };
+
+    goog.DEBUG && (goog.html.SafeStyleSheet.prototype.toString = function () {
+      return "SafeStyleSheet{" + this.privateDoNotAccessOrElseSafeStyleSheetWrappedValue_ + "}";
+    });
+
+    goog.html.SafeStyleSheet.unwrap = function (a) {
+      if (a instanceof goog.html.SafeStyleSheet && a.constructor === goog.html.SafeStyleSheet && a.SAFE_STYLE_SHEET_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ === goog.html.SafeStyleSheet.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_) return a.privateDoNotAccessOrElseSafeStyleSheetWrappedValue_;
+      goog.asserts.fail("expected object of type SafeStyleSheet, got '" + a + "' of type " + goog.typeOf(a));
+      return "type_error:SafeStyleSheet";
+    };
+
+    goog.html.SafeStyleSheet.createSafeStyleSheetSecurityPrivateDoNotAccessOrElse = function (a) {
+      return new goog.html.SafeStyleSheet().initSecurityPrivateDoNotAccessOrElse_(a);
+    };
+
+    goog.html.SafeStyleSheet.prototype.initSecurityPrivateDoNotAccessOrElse_ = function (a) {
+      this.privateDoNotAccessOrElseSafeStyleSheetWrappedValue_ = a;
+      return this;
+    };
+
+    goog.html.SafeStyleSheet.EMPTY = goog.html.SafeStyleSheet.createSafeStyleSheetSecurityPrivateDoNotAccessOrElse("");
+    goog.labs = {};
+    goog.labs.userAgent = {};
+    goog.labs.userAgent.util = {};
+
+    goog.labs.userAgent.util.getNativeUserAgentString_ = function () {
+      var a = goog.labs.userAgent.util.getNavigator_();
+      return a && (a = a.userAgent) ? a : "";
+    };
+
+    goog.labs.userAgent.util.getNavigator_ = function () {
+      return goog.global.navigator;
+    };
+
+    goog.labs.userAgent.util.userAgent_ = goog.labs.userAgent.util.getNativeUserAgentString_();
+
+    goog.labs.userAgent.util.setUserAgent = function (a) {
+      goog.labs.userAgent.util.userAgent_ = a || goog.labs.userAgent.util.getNativeUserAgentString_();
+    };
+
+    goog.labs.userAgent.util.getUserAgent = function () {
+      return goog.labs.userAgent.util.userAgent_;
+    };
+
+    goog.labs.userAgent.util.matchUserAgent = function (a) {
+      var b = goog.labs.userAgent.util.getUserAgent();
+      return goog.string.internal.contains(b, a);
+    };
+
+    goog.labs.userAgent.util.matchUserAgentIgnoreCase = function (a) {
+      var b = goog.labs.userAgent.util.getUserAgent();
+      return goog.string.internal.caseInsensitiveContains(b, a);
+    };
+
+    goog.labs.userAgent.util.extractVersionTuples = function (a) {
+      for (var b = /(\w[\w ]+)\/([^\s]+)\s*(?:\((.*?)\))?/g, c = [], d; d = b.exec(a);) {
+        c.push([d[1], d[2], d[3] || void 0]);
+      }
+
+      return c;
+    };
+
+    goog.labs.userAgent.browser = {};
+
+    goog.labs.userAgent.browser.matchOpera_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Opera");
+    };
+
+    goog.labs.userAgent.browser.matchIE_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Trident") || goog.labs.userAgent.util.matchUserAgent("MSIE");
+    };
+
+    goog.labs.userAgent.browser.matchEdgeHtml_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Edge");
+    };
+
+    goog.labs.userAgent.browser.matchEdgeChromium_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Edg/");
+    };
+
+    goog.labs.userAgent.browser.matchOperaChromium_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("OPR");
+    };
+
+    goog.labs.userAgent.browser.matchFirefox_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Firefox") || goog.labs.userAgent.util.matchUserAgent("FxiOS");
+    };
+
+    goog.labs.userAgent.browser.matchSafari_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Safari") && !(goog.labs.userAgent.browser.matchChrome_() || goog.labs.userAgent.browser.matchCoast_() || goog.labs.userAgent.browser.matchOpera_() || goog.labs.userAgent.browser.matchEdgeHtml_() || goog.labs.userAgent.browser.matchEdgeChromium_() || goog.labs.userAgent.browser.matchOperaChromium_() || goog.labs.userAgent.browser.matchFirefox_() || goog.labs.userAgent.browser.isSilk() || goog.labs.userAgent.util.matchUserAgent("Android"));
+    };
+
+    goog.labs.userAgent.browser.matchCoast_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Coast");
+    };
+
+    goog.labs.userAgent.browser.matchIosWebview_ = function () {
+      return (goog.labs.userAgent.util.matchUserAgent("iPad") || goog.labs.userAgent.util.matchUserAgent("iPhone")) && !goog.labs.userAgent.browser.matchSafari_() && !goog.labs.userAgent.browser.matchChrome_() && !goog.labs.userAgent.browser.matchCoast_() && !goog.labs.userAgent.browser.matchFirefox_() && goog.labs.userAgent.util.matchUserAgent("AppleWebKit");
+    };
+
+    goog.labs.userAgent.browser.matchChrome_ = function () {
+      return (goog.labs.userAgent.util.matchUserAgent("Chrome") || goog.labs.userAgent.util.matchUserAgent("CriOS")) && !goog.labs.userAgent.browser.matchEdgeHtml_();
+    };
+
+    goog.labs.userAgent.browser.matchAndroidBrowser_ = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Android") && !(goog.labs.userAgent.browser.isChrome() || goog.labs.userAgent.browser.isFirefox() || goog.labs.userAgent.browser.isOpera() || goog.labs.userAgent.browser.isSilk());
+    };
+
+    goog.labs.userAgent.browser.isOpera = goog.labs.userAgent.browser.matchOpera_;
+    goog.labs.userAgent.browser.isIE = goog.labs.userAgent.browser.matchIE_;
+    goog.labs.userAgent.browser.isEdge = goog.labs.userAgent.browser.matchEdgeHtml_;
+    goog.labs.userAgent.browser.isEdgeChromium = goog.labs.userAgent.browser.matchEdgeChromium_;
+    goog.labs.userAgent.browser.isOperaChromium = goog.labs.userAgent.browser.matchOperaChromium_;
+    goog.labs.userAgent.browser.isFirefox = goog.labs.userAgent.browser.matchFirefox_;
+    goog.labs.userAgent.browser.isSafari = goog.labs.userAgent.browser.matchSafari_;
+    goog.labs.userAgent.browser.isCoast = goog.labs.userAgent.browser.matchCoast_;
+    goog.labs.userAgent.browser.isIosWebview = goog.labs.userAgent.browser.matchIosWebview_;
+    goog.labs.userAgent.browser.isChrome = goog.labs.userAgent.browser.matchChrome_;
+    goog.labs.userAgent.browser.isAndroidBrowser = goog.labs.userAgent.browser.matchAndroidBrowser_;
+
+    goog.labs.userAgent.browser.isSilk = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Silk");
+    };
+
+    goog.labs.userAgent.browser.getVersion = function () {
+      function a(a) {
+        a = goog.array.find(a, d);
+        return c[a] || "";
+      }
+
+      var b = goog.labs.userAgent.util.getUserAgent();
+      if (goog.labs.userAgent.browser.isIE()) return goog.labs.userAgent.browser.getIEVersion_(b);
+      b = goog.labs.userAgent.util.extractVersionTuples(b);
+      var c = {};
+      goog.array.forEach(b, function (a) {
+        c[a[0]] = a[1];
+      });
+      var d = goog.partial(goog.object.containsKey, c);
+      return goog.labs.userAgent.browser.isOpera() ? a(["Version", "Opera"]) : goog.labs.userAgent.browser.isEdge() ? a(["Edge"]) : goog.labs.userAgent.browser.isEdgeChromium() ? a(["Edg"]) : goog.labs.userAgent.browser.isChrome() ? a(["Chrome", "CriOS"]) : (b = b[2]) && b[1] || "";
+    };
+
+    goog.labs.userAgent.browser.isVersionOrHigher = function (a) {
+      return 0 <= goog.string.internal.compareVersions(goog.labs.userAgent.browser.getVersion(), a);
+    };
+
+    goog.labs.userAgent.browser.getIEVersion_ = function (a) {
+      var b = /rv: *([\d\.]*)/.exec(a);
+      if (b && b[1]) return b[1];
+      b = "";
+      var c = /MSIE +([\d\.]+)/.exec(a);
+      if (c && c[1]) if (a = /Trident\/(\d.\d)/.exec(a), "7.0" == c[1]) {
+        if (a && a[1]) switch (a[1]) {
+          case "4.0":
+            b = "8.0";
+            break;
+
+          case "5.0":
+            b = "9.0";
+            break;
+
+          case "6.0":
+            b = "10.0";
+            break;
+
+          case "7.0":
+            b = "11.0";
+        } else b = "7.0";
+      } else b = c[1];
+      return b;
+    };
+
+    goog.html.SafeHtml = function () {
+      this.privateDoNotAccessOrElseSafeHtmlWrappedValue_ = "";
+      this.SAFE_HTML_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = goog.html.SafeHtml.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_;
+      this.dir_ = null;
+    };
+
+    goog.html.SafeHtml.prototype.implementsGoogI18nBidiDirectionalString = !0;
+
+    goog.html.SafeHtml.prototype.getDirection = function () {
+      return this.dir_;
+    };
+
+    goog.html.SafeHtml.prototype.implementsGoogStringTypedString = !0;
+
+    goog.html.SafeHtml.prototype.getTypedStringValue = function () {
+      return this.privateDoNotAccessOrElseSafeHtmlWrappedValue_.toString();
+    };
+
+    goog.DEBUG && (goog.html.SafeHtml.prototype.toString = function () {
+      return "SafeHtml{" + this.privateDoNotAccessOrElseSafeHtmlWrappedValue_ + "}";
+    });
+
+    goog.html.SafeHtml.unwrap = function (a) {
+      return goog.html.SafeHtml.unwrapTrustedHTML(a).toString();
+    };
+
+    goog.html.SafeHtml.unwrapTrustedHTML = function (a) {
+      if (a instanceof goog.html.SafeHtml && a.constructor === goog.html.SafeHtml && a.SAFE_HTML_TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ === goog.html.SafeHtml.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_) return a.privateDoNotAccessOrElseSafeHtmlWrappedValue_;
+      goog.asserts.fail("expected object of type SafeHtml, got '" + a + "' of type " + goog.typeOf(a));
+      return "type_error:SafeHtml";
+    };
+
+    goog.html.SafeHtml.htmlEscape = function (a) {
+      if (a instanceof goog.html.SafeHtml) return a;
+
+      var b = "object" == _typeof(a),
+          c = null;
+
+      b && a.implementsGoogI18nBidiDirectionalString && (c = a.getDirection());
+      a = b && a.implementsGoogStringTypedString ? a.getTypedStringValue() : String(a);
+      return goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(goog.string.internal.htmlEscape(a), c);
+    };
+
+    goog.html.SafeHtml.htmlEscapePreservingNewlines = function (a) {
+      if (a instanceof goog.html.SafeHtml) return a;
+      a = goog.html.SafeHtml.htmlEscape(a);
+      return goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(goog.string.internal.newLineToBr(goog.html.SafeHtml.unwrap(a)), a.getDirection());
+    };
+
+    goog.html.SafeHtml.htmlEscapePreservingNewlinesAndSpaces = function (a) {
+      if (a instanceof goog.html.SafeHtml) return a;
+      a = goog.html.SafeHtml.htmlEscape(a);
+      return goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(goog.string.internal.whitespaceEscape(goog.html.SafeHtml.unwrap(a)), a.getDirection());
+    };
+
+    goog.html.SafeHtml.from = goog.html.SafeHtml.htmlEscape;
+    goog.html.SafeHtml.VALID_NAMES_IN_TAG_ = /^[a-zA-Z0-9-]+$/;
+    goog.html.SafeHtml.URL_ATTRIBUTES_ = {
+      action: !0,
+      cite: !0,
+      data: !0,
+      formaction: !0,
+      href: !0,
+      manifest: !0,
+      poster: !0,
+      src: !0
+    };
+    goog.html.SafeHtml.NOT_ALLOWED_TAG_NAMES_ = {
+      APPLET: !0,
+      BASE: !0,
+      EMBED: !0,
+      IFRAME: !0,
+      LINK: !0,
+      MATH: !0,
+      META: !0,
+      OBJECT: !0,
+      SCRIPT: !0,
+      STYLE: !0,
+      SVG: !0,
+      TEMPLATE: !0
+    };
+
+    goog.html.SafeHtml.create = function (a, b, c) {
+      goog.html.SafeHtml.verifyTagName(String(a));
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse(String(a), b, c);
+    };
+
+    goog.html.SafeHtml.verifyTagName = function (a) {
+      if (!goog.html.SafeHtml.VALID_NAMES_IN_TAG_.test(a)) throw Error("Invalid tag name <" + a + ">.");
+      if (a.toUpperCase() in goog.html.SafeHtml.NOT_ALLOWED_TAG_NAMES_) throw Error("Tag name <" + a + "> is not allowed for SafeHtml.");
+    };
+
+    goog.html.SafeHtml.createIframe = function (a, b, c, d) {
+      a && goog.html.TrustedResourceUrl.unwrap(a);
+      var e = {};
+      e.src = a || null;
+      e.srcdoc = b && goog.html.SafeHtml.unwrap(b);
+      a = goog.html.SafeHtml.combineAttributes(e, {
+        sandbox: ""
+      }, c);
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse("iframe", a, d);
+    };
+
+    goog.html.SafeHtml.createSandboxIframe = function (a, b, c, d) {
+      if (!goog.html.SafeHtml.canUseSandboxIframe()) throw Error("The browser does not support sandboxed iframes.");
+      var e = {};
+      e.src = a ? goog.html.SafeUrl.unwrap(goog.html.SafeUrl.sanitize(a)) : null;
+      e.srcdoc = b || null;
+      e.sandbox = "";
+      a = goog.html.SafeHtml.combineAttributes(e, {}, c);
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse("iframe", a, d);
+    };
+
+    goog.html.SafeHtml.canUseSandboxIframe = function () {
+      return goog.global.HTMLIFrameElement && "sandbox" in goog.global.HTMLIFrameElement.prototype;
+    };
+
+    goog.html.SafeHtml.createScriptSrc = function (a, b) {
+      goog.html.TrustedResourceUrl.unwrap(a);
+      a = goog.html.SafeHtml.combineAttributes({
+        src: a
+      }, {}, b);
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse("script", a);
+    };
+
+    goog.html.SafeHtml.createScript = function (a, b) {
+      for (var c in b) {
+        var d = c.toLowerCase();
+        if ("language" == d || "src" == d || "text" == d || "type" == d) throw Error('Cannot set "' + d + '" attribute');
+      }
+
+      c = "";
+      a = goog.array.concat(a);
+
+      for (d = 0; d < a.length; d++) {
+        c += goog.html.SafeScript.unwrap(a[d]);
+      }
+
+      a = goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(c, goog.i18n.bidi.Dir.NEUTRAL);
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse("script", b, a);
+    };
+
+    goog.html.SafeHtml.createStyle = function (a, b) {
+      b = goog.html.SafeHtml.combineAttributes({
+        type: "text/css"
+      }, {}, b);
+      var c = "";
+      a = goog.array.concat(a);
+
+      for (var d = 0; d < a.length; d++) {
+        c += goog.html.SafeStyleSheet.unwrap(a[d]);
+      }
+
+      a = goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(c, goog.i18n.bidi.Dir.NEUTRAL);
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse("style", b, a);
+    };
+
+    goog.html.SafeHtml.createMetaRefresh = function (a, b) {
+      a = goog.html.SafeUrl.unwrap(goog.html.SafeUrl.sanitize(a));
+      (goog.labs.userAgent.browser.isIE() || goog.labs.userAgent.browser.isEdge()) && goog.string.internal.contains(a, ";") && (a = "'" + a.replace(/'/g, "%27") + "'");
+      return goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse("meta", {
+        "http-equiv": "refresh",
+        content: (b || 0) + "; url=" + a
+      });
+    };
+
+    goog.html.SafeHtml.getAttrNameAndValue_ = function (a, b, c) {
+      if (c instanceof goog.string.Const) c = goog.string.Const.unwrap(c);else if ("style" == b.toLowerCase()) c = goog.html.SafeHtml.getStyleValue_(c);else {
+        if (/^on/i.test(b)) throw Error('Attribute "' + b + '" requires goog.string.Const value, "' + c + '" given.');
+        if (b.toLowerCase() in goog.html.SafeHtml.URL_ATTRIBUTES_) if (c instanceof goog.html.TrustedResourceUrl) c = goog.html.TrustedResourceUrl.unwrap(c);else if (c instanceof goog.html.SafeUrl) c = goog.html.SafeUrl.unwrap(c);else if (goog.isString(c)) c = goog.html.SafeUrl.sanitize(c).getTypedStringValue();else throw Error('Attribute "' + b + '" on tag "' + a + '" requires goog.html.SafeUrl, goog.string.Const, or string, value "' + c + '" given.');
+      }
+      c.implementsGoogStringTypedString && (c = c.getTypedStringValue());
+      goog.asserts.assert(goog.isString(c) || goog.isNumber(c), "String or number value expected, got " + _typeof(c) + " with value: " + c);
+      return b + '="' + goog.string.internal.htmlEscape(String(c)) + '"';
+    };
+
+    goog.html.SafeHtml.getStyleValue_ = function (a) {
+      if (!goog.isObject(a)) throw Error('The "style" attribute requires goog.html.SafeStyle or map of style properties, ' + _typeof(a) + " given: " + a);
+      a instanceof goog.html.SafeStyle || (a = goog.html.SafeStyle.create(a));
+      return goog.html.SafeStyle.unwrap(a);
+    };
+
+    goog.html.SafeHtml.createWithDir = function (a, b, c, d) {
+      b = goog.html.SafeHtml.create(b, c, d);
+      b.dir_ = a;
+      return b;
+    };
+
+    goog.html.SafeHtml.join = function (a, b) {
+      a = goog.html.SafeHtml.htmlEscape(a);
+
+      var c = a.getDirection(),
+          d = [],
+          e = function e(a) {
+        goog.isArray(a) ? goog.array.forEach(a, e) : (a = goog.html.SafeHtml.htmlEscape(a), d.push(goog.html.SafeHtml.unwrap(a)), a = a.getDirection(), c == goog.i18n.bidi.Dir.NEUTRAL ? c = a : a != goog.i18n.bidi.Dir.NEUTRAL && c != a && (c = null));
+      };
+
+      goog.array.forEach(b, e);
+      return goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(d.join(goog.html.SafeHtml.unwrap(a)), c);
+    };
+
+    goog.html.SafeHtml.concat = function (a) {
+      return goog.html.SafeHtml.join(goog.html.SafeHtml.EMPTY, Array.prototype.slice.call(arguments));
+    };
+
+    goog.html.SafeHtml.concatWithDir = function (a, b) {
+      var c = goog.html.SafeHtml.concat(goog.array.slice(arguments, 1));
+      c.dir_ = a;
+      return c;
+    };
+
+    goog.html.SafeHtml.TYPE_MARKER_GOOG_HTML_SECURITY_PRIVATE_ = {};
+
+    goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse = function (a, b) {
+      return new goog.html.SafeHtml().initSecurityPrivateDoNotAccessOrElse_(a, b);
+    };
+
+    goog.html.SafeHtml.prototype.initSecurityPrivateDoNotAccessOrElse_ = function (a, b) {
+      this.privateDoNotAccessOrElseSafeHtmlWrappedValue_ = goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY ? goog.html.trustedtypes.PRIVATE_DO_NOT_ACCESS_OR_ELSE_POLICY.createHTML(a) : a;
+      this.dir_ = b;
+      return this;
+    };
+
+    goog.html.SafeHtml.createSafeHtmlTagSecurityPrivateDoNotAccessOrElse = function (a, b, c) {
+      var d = null;
+      var e = "<" + a + goog.html.SafeHtml.stringifyAttributes(a, b);
+      goog.isDefAndNotNull(c) ? goog.isArray(c) || (c = [c]) : c = [];
+      goog.dom.tags.isVoidTag(a.toLowerCase()) ? (goog.asserts.assert(!c.length, "Void tag <" + a + "> does not allow content."), e += ">") : (d = goog.html.SafeHtml.concat(c), e += ">" + goog.html.SafeHtml.unwrap(d) + "</" + a + ">", d = d.getDirection());
+      (a = b && b.dir) && (d = /^(ltr|rtl|auto)$/i.test(a) ? goog.i18n.bidi.Dir.NEUTRAL : null);
+      return goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(e, d);
+    };
+
+    goog.html.SafeHtml.stringifyAttributes = function (a, b) {
+      var c = "";
+      if (b) for (var d in b) {
+        if (!goog.html.SafeHtml.VALID_NAMES_IN_TAG_.test(d)) throw Error('Invalid attribute name "' + d + '".');
+        var e = b[d];
+        goog.isDefAndNotNull(e) && (c += " " + goog.html.SafeHtml.getAttrNameAndValue_(a, d, e));
+      }
+      return c;
+    };
+
+    goog.html.SafeHtml.combineAttributes = function (a, b, c) {
+      var d = {},
+          e;
+
+      for (e in a) {
+        goog.asserts.assert(e.toLowerCase() == e, "Must be lower case"), d[e] = a[e];
+      }
+
+      for (e in b) {
+        goog.asserts.assert(e.toLowerCase() == e, "Must be lower case"), d[e] = b[e];
+      }
+
+      for (e in c) {
+        var f = e.toLowerCase();
+        if (f in a) throw Error('Cannot override "' + f + '" attribute, got "' + e + '" with value "' + c[e] + '"');
+        f in b && delete d[f];
+        d[e] = c[e];
+      }
+
+      return d;
+    };
+
+    goog.html.SafeHtml.DOCTYPE_HTML = goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse("<!DOCTYPE html>", goog.i18n.bidi.Dir.NEUTRAL);
+    goog.html.SafeHtml.EMPTY = goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse("", goog.i18n.bidi.Dir.NEUTRAL);
+    goog.html.SafeHtml.BR = goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse("<br>", goog.i18n.bidi.Dir.NEUTRAL);
+    goog.html.uncheckedconversions = {};
+
+    goog.html.uncheckedconversions.safeHtmlFromStringKnownToSatisfyTypeContract = function (a, b, c) {
+      goog.asserts.assertString(goog.string.Const.unwrap(a), "must provide justification");
+      goog.asserts.assert(!goog.string.internal.isEmptyOrWhitespace(goog.string.Const.unwrap(a)), "must provide non-empty justification");
+      return goog.html.SafeHtml.createSafeHtmlSecurityPrivateDoNotAccessOrElse(b, c || null);
+    };
+
+    goog.html.uncheckedconversions.safeScriptFromStringKnownToSatisfyTypeContract = function (a, b) {
+      goog.asserts.assertString(goog.string.Const.unwrap(a), "must provide justification");
+      goog.asserts.assert(!goog.string.internal.isEmptyOrWhitespace(goog.string.Const.unwrap(a)), "must provide non-empty justification");
+      return goog.html.SafeScript.createSafeScriptSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.uncheckedconversions.safeStyleFromStringKnownToSatisfyTypeContract = function (a, b) {
+      goog.asserts.assertString(goog.string.Const.unwrap(a), "must provide justification");
+      goog.asserts.assert(!goog.string.internal.isEmptyOrWhitespace(goog.string.Const.unwrap(a)), "must provide non-empty justification");
+      return goog.html.SafeStyle.createSafeStyleSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.uncheckedconversions.safeStyleSheetFromStringKnownToSatisfyTypeContract = function (a, b) {
+      goog.asserts.assertString(goog.string.Const.unwrap(a), "must provide justification");
+      goog.asserts.assert(!goog.string.internal.isEmptyOrWhitespace(goog.string.Const.unwrap(a)), "must provide non-empty justification");
+      return goog.html.SafeStyleSheet.createSafeStyleSheetSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.uncheckedconversions.safeUrlFromStringKnownToSatisfyTypeContract = function (a, b) {
+      goog.asserts.assertString(goog.string.Const.unwrap(a), "must provide justification");
+      goog.asserts.assert(!goog.string.internal.isEmptyOrWhitespace(goog.string.Const.unwrap(a)), "must provide non-empty justification");
+      return goog.html.SafeUrl.createSafeUrlSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.html.uncheckedconversions.trustedResourceUrlFromStringKnownToSatisfyTypeContract = function (a, b) {
+      goog.asserts.assertString(goog.string.Const.unwrap(a), "must provide justification");
+      goog.asserts.assert(!goog.string.internal.isEmptyOrWhitespace(goog.string.Const.unwrap(a)), "must provide non-empty justification");
+      return goog.html.TrustedResourceUrl.createTrustedResourceUrlSecurityPrivateDoNotAccessOrElse(b);
+    };
+
+    goog.dom.safe = {};
+    goog.dom.safe.InsertAdjacentHtmlPosition = {
+      AFTERBEGIN: "afterbegin",
+      AFTEREND: "afterend",
+      BEFOREBEGIN: "beforebegin",
+      BEFOREEND: "beforeend"
+    };
+
+    goog.dom.safe.insertAdjacentHtml = function (a, b, c) {
+      a.insertAdjacentHTML(b, goog.html.SafeHtml.unwrapTrustedHTML(c));
+    };
+
+    goog.dom.safe.SET_INNER_HTML_DISALLOWED_TAGS_ = {
+      MATH: !0,
+      SCRIPT: !0,
+      STYLE: !0,
+      SVG: !0,
+      TEMPLATE: !0
+    };
+    goog.dom.safe.isInnerHtmlCleanupRecursive_ = goog.functions.cacheReturnValue(function () {
+      if (goog.DEBUG && "undefined" === typeof document) return !1;
+      var a = document.createElement("div"),
+          b = document.createElement("div");
+      b.appendChild(document.createElement("div"));
+      a.appendChild(b);
+      if (goog.DEBUG && !a.firstChild) return !1;
+      b = a.firstChild.firstChild;
+      a.innerHTML = goog.html.SafeHtml.unwrapTrustedHTML(goog.html.SafeHtml.EMPTY);
+      return !b.parentElement;
+    });
+
+    goog.dom.safe.unsafeSetInnerHtmlDoNotUseOrElse = function (a, b) {
+      if (goog.dom.safe.isInnerHtmlCleanupRecursive_()) for (; a.lastChild;) {
+        a.removeChild(a.lastChild);
+      }
+      a.innerHTML = goog.html.SafeHtml.unwrapTrustedHTML(b);
+    };
+
+    goog.dom.safe.setInnerHtml = function (a, b) {
+      if (goog.asserts.ENABLE_ASSERTS) {
+        var c = a.tagName.toUpperCase();
+        if (goog.dom.safe.SET_INNER_HTML_DISALLOWED_TAGS_[c]) throw Error("goog.dom.safe.setInnerHtml cannot be used to set content of " + a.tagName + ".");
+      }
+
+      goog.dom.safe.unsafeSetInnerHtmlDoNotUseOrElse(a, b);
+    };
+
+    goog.dom.safe.setOuterHtml = function (a, b) {
+      a.outerHTML = goog.html.SafeHtml.unwrapTrustedHTML(b);
+    };
+
+    goog.dom.safe.setFormElementAction = function (a, b) {
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      goog.dom.asserts.assertIsHTMLFormElement(a).action = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setButtonFormAction = function (a, b) {
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      goog.dom.asserts.assertIsHTMLButtonElement(a).formAction = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setInputFormAction = function (a, b) {
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      goog.dom.asserts.assertIsHTMLInputElement(a).formAction = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setStyle = function (a, b) {
+      a.style.cssText = goog.html.SafeStyle.unwrap(b);
+    };
+
+    goog.dom.safe.documentWrite = function (a, b) {
+      a.write(goog.html.SafeHtml.unwrapTrustedHTML(b));
+    };
+
+    goog.dom.safe.setAnchorHref = function (a, b) {
+      goog.dom.asserts.assertIsHTMLAnchorElement(a);
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      a.href = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setImageSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLImageElement(a);
+
+      if (!(b instanceof goog.html.SafeUrl)) {
+        var c = /^data:image\//i.test(b);
+        b = goog.html.SafeUrl.sanitizeAssertUnchanged(b, c);
+      }
+
+      a.src = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setAudioSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLAudioElement(a);
+
+      if (!(b instanceof goog.html.SafeUrl)) {
+        var c = /^data:audio\//i.test(b);
+        b = goog.html.SafeUrl.sanitizeAssertUnchanged(b, c);
+      }
+
+      a.src = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setVideoSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLVideoElement(a);
+
+      if (!(b instanceof goog.html.SafeUrl)) {
+        var c = /^data:video\//i.test(b);
+        b = goog.html.SafeUrl.sanitizeAssertUnchanged(b, c);
+      }
+
+      a.src = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setEmbedSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLEmbedElement(a);
+      a.src = goog.html.TrustedResourceUrl.unwrapTrustedScriptURL(b);
+    };
+
+    goog.dom.safe.setFrameSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLFrameElement(a);
+      a.src = goog.html.TrustedResourceUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setIframeSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLIFrameElement(a);
+      a.src = goog.html.TrustedResourceUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.setIframeSrcdoc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLIFrameElement(a);
+      a.srcdoc = goog.html.SafeHtml.unwrapTrustedHTML(b);
+    };
+
+    goog.dom.safe.setLinkHrefAndRel = function (a, b, c) {
+      goog.dom.asserts.assertIsHTMLLinkElement(a);
+      a.rel = c;
+      goog.string.internal.caseInsensitiveContains(c, "stylesheet") ? (goog.asserts.assert(b instanceof goog.html.TrustedResourceUrl, 'URL must be TrustedResourceUrl because "rel" contains "stylesheet"'), a.href = goog.html.TrustedResourceUrl.unwrapTrustedURL(b)) : a.href = b instanceof goog.html.TrustedResourceUrl ? goog.html.TrustedResourceUrl.unwrapTrustedURL(b) : b instanceof goog.html.SafeUrl ? goog.html.SafeUrl.unwrapTrustedURL(b) : goog.html.SafeUrl.unwrapTrustedURL(goog.html.SafeUrl.sanitizeAssertUnchanged(b));
+    };
+
+    goog.dom.safe.setObjectData = function (a, b) {
+      goog.dom.asserts.assertIsHTMLObjectElement(a);
+      a.data = goog.html.TrustedResourceUrl.unwrapTrustedScriptURL(b);
+    };
+
+    goog.dom.safe.setScriptSrc = function (a, b) {
+      goog.dom.asserts.assertIsHTMLScriptElement(a);
+      a.src = goog.html.TrustedResourceUrl.unwrapTrustedScriptURL(b);
+      (b = goog.getScriptNonce()) && a.setAttribute("nonce", b);
+    };
+
+    goog.dom.safe.setScriptContent = function (a, b) {
+      goog.dom.asserts.assertIsHTMLScriptElement(a);
+      a.text = goog.html.SafeScript.unwrapTrustedScript(b);
+      (b = goog.getScriptNonce()) && a.setAttribute("nonce", b);
+    };
+
+    goog.dom.safe.setLocationHref = function (a, b) {
+      goog.dom.asserts.assertIsLocation(a);
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      a.href = goog.html.SafeUrl.unwrapTrustedURL(b);
+    };
+
+    goog.dom.safe.assignLocation = function (a, b) {
+      goog.dom.asserts.assertIsLocation(a);
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      a.assign(goog.html.SafeUrl.unwrapTrustedURL(b));
+    };
+
+    goog.dom.safe.replaceLocation = function (a, b) {
+      goog.dom.asserts.assertIsLocation(a);
+      b = b instanceof goog.html.SafeUrl ? b : goog.html.SafeUrl.sanitizeAssertUnchanged(b);
+      a.replace(goog.html.SafeUrl.unwrapTrustedURL(b));
+    };
+
+    goog.dom.safe.openInWindow = function (a, b, c, d, e) {
+      a = a instanceof goog.html.SafeUrl ? a : goog.html.SafeUrl.sanitizeAssertUnchanged(a);
+      return (b || goog.global).open(goog.html.SafeUrl.unwrapTrustedURL(a), c ? goog.string.Const.unwrap(c) : "", d, e);
+    };
+
+    goog.dom.safe.parseFromStringHtml = function (a, b) {
+      return goog.dom.safe.parseFromString(a, b, "text/html");
+    };
+
+    goog.dom.safe.parseFromString = function (a, b, c) {
+      return a.parseFromString(goog.html.SafeHtml.unwrapTrustedHTML(b), c);
+    };
+
+    goog.dom.safe.createImageFromBlob = function (a) {
+      if (!/^image\/.*/g.test(a.type)) throw Error("goog.dom.safe.createImageFromBlob only accepts MIME type image/.*.");
+      var b = goog.global.URL.createObjectURL(a);
+      a = new goog.global.Image();
+
+      a.onload = function () {
+        goog.global.URL.revokeObjectURL(b);
+      };
+
+      goog.dom.safe.setImageSrc(a, goog.html.uncheckedconversions.safeUrlFromStringKnownToSatisfyTypeContract(goog.string.Const.from("Image blob URL."), b));
+      return a;
+    };
+
+    goog.string.DETECT_DOUBLE_ESCAPING = !1;
+    goog.string.FORCE_NON_DOM_HTML_UNESCAPING = !1;
+    goog.string.Unicode = {
+      NBSP: "\xA0"
+    };
+    goog.string.startsWith = goog.string.internal.startsWith;
+    goog.string.endsWith = goog.string.internal.endsWith;
+    goog.string.caseInsensitiveStartsWith = goog.string.internal.caseInsensitiveStartsWith;
+    goog.string.caseInsensitiveEndsWith = goog.string.internal.caseInsensitiveEndsWith;
+    goog.string.caseInsensitiveEquals = goog.string.internal.caseInsensitiveEquals;
+
+    goog.string.subs = function (a, b) {
+      for (var c = a.split("%s"), d = "", e = Array.prototype.slice.call(arguments, 1); e.length && 1 < c.length;) {
+        d += c.shift() + e.shift();
+      }
+
+      return d + c.join("%s");
+    };
+
+    goog.string.collapseWhitespace = function (a) {
+      return a.replace(/[\s\xa0]+/g, " ").replace(/^\s+|\s+$/g, "");
+    };
+
+    goog.string.isEmptyOrWhitespace = goog.string.internal.isEmptyOrWhitespace;
+
+    goog.string.isEmptyString = function (a) {
+      return 0 == a.length;
+    };
+
+    goog.string.isEmpty = goog.string.isEmptyOrWhitespace;
+
+    goog.string.isEmptyOrWhitespaceSafe = function (a) {
+      return goog.string.isEmptyOrWhitespace(goog.string.makeSafe(a));
+    };
+
+    goog.string.isEmptySafe = goog.string.isEmptyOrWhitespaceSafe;
+
+    goog.string.isBreakingWhitespace = function (a) {
+      return !/[^\t\n\r ]/.test(a);
+    };
+
+    goog.string.isAlpha = function (a) {
+      return !/[^a-zA-Z]/.test(a);
+    };
+
+    goog.string.isNumeric = function (a) {
+      return !/[^0-9]/.test(a);
+    };
+
+    goog.string.isAlphaNumeric = function (a) {
+      return !/[^a-zA-Z0-9]/.test(a);
+    };
+
+    goog.string.isSpace = function (a) {
+      return " " == a;
+    };
+
+    goog.string.isUnicodeChar = function (a) {
+      return 1 == a.length && " " <= a && "~" >= a || "\x80" <= a && "\uFFFD" >= a;
+    };
+
+    goog.string.stripNewlines = function (a) {
+      return a.replace(/(\r\n|\r|\n)+/g, " ");
+    };
+
+    goog.string.canonicalizeNewlines = function (a) {
+      return a.replace(/(\r\n|\r|\n)/g, "\n");
+    };
+
+    goog.string.normalizeWhitespace = function (a) {
+      return a.replace(/\xa0|\s/g, " ");
+    };
+
+    goog.string.normalizeSpaces = function (a) {
+      return a.replace(/\xa0|[ \t]+/g, " ");
+    };
+
+    goog.string.collapseBreakingSpaces = function (a) {
+      return a.replace(/[\t\r\n ]+/g, " ").replace(/^[\t\r\n ]+|[\t\r\n ]+$/g, "");
+    };
+
+    goog.string.trim = goog.string.internal.trim;
+
+    goog.string.trimLeft = function (a) {
+      return a.replace(/^[\s\xa0]+/, "");
+    };
+
+    goog.string.trimRight = function (a) {
+      return a.replace(/[\s\xa0]+$/, "");
+    };
+
+    goog.string.caseInsensitiveCompare = goog.string.internal.caseInsensitiveCompare;
+
+    goog.string.numberAwareCompare_ = function (a, b, c) {
+      if (a == b) return 0;
+      if (!a) return -1;
+      if (!b) return 1;
+
+      for (var d = a.toLowerCase().match(c), e = b.toLowerCase().match(c), f = Math.min(d.length, e.length), g = 0; g < f; g++) {
+        c = d[g];
+        var h = e[g];
+        if (c != h) return a = parseInt(c, 10), !isNaN(a) && (b = parseInt(h, 10), !isNaN(b) && a - b) ? a - b : c < h ? -1 : 1;
+      }
+
+      return d.length != e.length ? d.length - e.length : a < b ? -1 : 1;
+    };
+
+    goog.string.intAwareCompare = function (a, b) {
+      return goog.string.numberAwareCompare_(a, b, /\d+|\D+/g);
+    };
+
+    goog.string.floatAwareCompare = function (a, b) {
+      return goog.string.numberAwareCompare_(a, b, /\d+|\.\d+|\D+/g);
+    };
+
+    goog.string.numerateCompare = goog.string.floatAwareCompare;
+
+    goog.string.urlEncode = function (a) {
+      return encodeURIComponent(String(a));
+    };
+
+    goog.string.urlDecode = function (a) {
+      return decodeURIComponent(a.replace(/\+/g, " "));
+    };
+
+    goog.string.newLineToBr = goog.string.internal.newLineToBr;
+
+    goog.string.htmlEscape = function (a, b) {
+      a = goog.string.internal.htmlEscape(a, b);
+      goog.string.DETECT_DOUBLE_ESCAPING && (a = a.replace(goog.string.E_RE_, "&#101;"));
+      return a;
+    };
+
+    goog.string.E_RE_ = /e/g;
+
+    goog.string.unescapeEntities = function (a) {
+      return goog.string.contains(a, "&") ? !goog.string.FORCE_NON_DOM_HTML_UNESCAPING && "document" in goog.global ? goog.string.unescapeEntitiesUsingDom_(a) : goog.string.unescapePureXmlEntities_(a) : a;
+    };
+
+    goog.string.unescapeEntitiesWithDocument = function (a, b) {
+      return goog.string.contains(a, "&") ? goog.string.unescapeEntitiesUsingDom_(a, b) : a;
+    };
+
+    goog.string.unescapeEntitiesUsingDom_ = function (a, b) {
+      var c = {
+        "&amp;": "&",
+        "&lt;": "<",
+        "&gt;": ">",
+        "&quot;": '"'
+      };
+      var d = b ? b.createElement("div") : goog.global.document.createElement("div");
+      return a.replace(goog.string.HTML_ENTITY_PATTERN_, function (a, b) {
+        var e = c[a];
+        if (e) return e;
+        "#" == b.charAt(0) && (b = Number("0" + b.substr(1)), isNaN(b) || (e = String.fromCharCode(b)));
+        e || (goog.dom.safe.setInnerHtml(d, goog.html.uncheckedconversions.safeHtmlFromStringKnownToSatisfyTypeContract(goog.string.Const.from("Single HTML entity."), a + " ")), e = d.firstChild.nodeValue.slice(0, -1));
+        return c[a] = e;
+      });
+    };
+
+    goog.string.unescapePureXmlEntities_ = function (a) {
+      return a.replace(/&([^;]+);/g, function (a, c) {
+        switch (c) {
+          case "amp":
+            return "&";
+
+          case "lt":
+            return "<";
+
+          case "gt":
+            return ">";
+
+          case "quot":
+            return '"';
+
+          default:
+            return "#" != c.charAt(0) || (c = Number("0" + c.substr(1)), isNaN(c)) ? a : String.fromCharCode(c);
+        }
+      });
+    };
+
+    goog.string.HTML_ENTITY_PATTERN_ = /&([^;\s<&]+);?/g;
+
+    goog.string.whitespaceEscape = function (a, b) {
+      return goog.string.newLineToBr(a.replace(/  /g, " &#160;"), b);
+    };
+
+    goog.string.preserveSpaces = function (a) {
+      return a.replace(/(^|[\n ]) /g, "$1" + goog.string.Unicode.NBSP);
+    };
+
+    goog.string.stripQuotes = function (a, b) {
+      for (var c = b.length, d = 0; d < c; d++) {
+        var e = 1 == c ? b : b.charAt(d);
+        if (a.charAt(0) == e && a.charAt(a.length - 1) == e) return a.substring(1, a.length - 1);
+      }
+
+      return a;
+    };
+
+    goog.string.truncate = function (a, b, c) {
+      c && (a = goog.string.unescapeEntities(a));
+      a.length > b && (a = a.substring(0, b - 3) + "...");
+      c && (a = goog.string.htmlEscape(a));
+      return a;
+    };
+
+    goog.string.truncateMiddle = function (a, b, c, d) {
+      c && (a = goog.string.unescapeEntities(a));
+
+      if (d && a.length > b) {
+        d > b && (d = b);
+        var e = a.length - d;
+        a = a.substring(0, b - d) + "..." + a.substring(e);
+      } else a.length > b && (d = Math.floor(b / 2), e = a.length - d, a = a.substring(0, d + b % 2) + "..." + a.substring(e));
+
+      c && (a = goog.string.htmlEscape(a));
+      return a;
+    };
+
+    goog.string.specialEscapeChars_ = {
+      "\x00": "\\0",
+      "\b": "\\b",
+      "\f": "\\f",
+      "\n": "\\n",
+      "\r": "\\r",
+      "\t": "\\t",
+      "\x0B": "\\x0B",
+      '"': '\\"',
+      "\\": "\\\\",
+      "<": "\\u003C"
+    };
+    goog.string.jsEscapeCache_ = {
+      "'": "\\'"
+    };
+
+    goog.string.quote = function (a) {
+      a = String(a);
+
+      for (var b = ['"'], c = 0; c < a.length; c++) {
+        var d = a.charAt(c),
+            e = d.charCodeAt(0);
+        b[c + 1] = goog.string.specialEscapeChars_[d] || (31 < e && 127 > e ? d : goog.string.escapeChar(d));
+      }
+
+      b.push('"');
+      return b.join("");
+    };
+
+    goog.string.escapeString = function (a) {
+      for (var b = [], c = 0; c < a.length; c++) {
+        b[c] = goog.string.escapeChar(a.charAt(c));
+      }
+
+      return b.join("");
+    };
+
+    goog.string.escapeChar = function (a) {
+      if (a in goog.string.jsEscapeCache_) return goog.string.jsEscapeCache_[a];
+      if (a in goog.string.specialEscapeChars_) return goog.string.jsEscapeCache_[a] = goog.string.specialEscapeChars_[a];
+      var b = a.charCodeAt(0);
+      if (31 < b && 127 > b) var c = a;else {
+        if (256 > b) {
+          if (c = "\\x", 16 > b || 256 < b) c += "0";
+        } else c = "\\u", 4096 > b && (c += "0");
+
+        c += b.toString(16).toUpperCase();
+      }
+      return goog.string.jsEscapeCache_[a] = c;
+    };
+
+    goog.string.contains = goog.string.internal.contains;
+    goog.string.caseInsensitiveContains = goog.string.internal.caseInsensitiveContains;
+
+    goog.string.countOf = function (a, b) {
+      return a && b ? a.split(b).length - 1 : 0;
+    };
+
+    goog.string.removeAt = function (a, b, c) {
+      var d = a;
+      0 <= b && b < a.length && 0 < c && (d = a.substr(0, b) + a.substr(b + c, a.length - b - c));
+      return d;
+    };
+
+    goog.string.remove = function (a, b) {
+      return a.replace(b, "");
+    };
+
+    goog.string.removeAll = function (a, b) {
+      b = new RegExp(goog.string.regExpEscape(b), "g");
+      return a.replace(b, "");
+    };
+
+    goog.string.replaceAll = function (a, b, c) {
+      b = new RegExp(goog.string.regExpEscape(b), "g");
+      return a.replace(b, c.replace(/\$/g, "$$$$"));
+    };
+
+    goog.string.regExpEscape = function (a) {
+      return String(a).replace(/([-()\[\]{}+?*.$\^|,:#<!\\])/g, "\\$1").replace(/\x08/g, "\\x08");
+    };
+
+    goog.string.repeat = String.prototype.repeat ? function (a, b) {
+      return a.repeat(b);
+    } : function (a, b) {
+      return Array(b + 1).join(a);
+    };
+
+    goog.string.padNumber = function (a, b, c) {
+      a = goog.isDef(c) ? a.toFixed(c) : String(a);
+      c = a.indexOf(".");
+      -1 == c && (c = a.length);
+      return goog.string.repeat("0", Math.max(0, b - c)) + a;
+    };
+
+    goog.string.makeSafe = function (a) {
+      return null == a ? "" : String(a);
+    };
+
+    goog.string.buildString = function (a) {
+      return Array.prototype.join.call(arguments, "");
+    };
+
+    goog.string.getRandomString = function () {
+      return Math.floor(2147483648 * Math.random()).toString(36) + Math.abs(Math.floor(2147483648 * Math.random()) ^ goog.now()).toString(36);
+    };
+
+    goog.string.compareVersions = goog.string.internal.compareVersions;
+
+    goog.string.hashCode = function (a) {
+      for (var b = 0, c = 0; c < a.length; ++c) {
+        b = 31 * b + a.charCodeAt(c) >>> 0;
+      }
+
+      return b;
+    };
+
+    goog.string.uniqueStringCounter_ = 2147483648 * Math.random() | 0;
+
+    goog.string.createUniqueString = function () {
+      return "goog_" + goog.string.uniqueStringCounter_++;
+    };
+
+    goog.string.toNumber = function (a) {
+      var b = Number(a);
+      return 0 == b && goog.string.isEmptyOrWhitespace(a) ? NaN : b;
+    };
+
+    goog.string.isLowerCamelCase = function (a) {
+      return /^[a-z]+([A-Z][a-z]*)*$/.test(a);
+    };
+
+    goog.string.isUpperCamelCase = function (a) {
+      return /^([A-Z][a-z]*)+$/.test(a);
+    };
+
+    goog.string.toCamelCase = function (a) {
+      return String(a).replace(/\-([a-z])/g, function (a, c) {
+        return c.toUpperCase();
+      });
+    };
+
+    goog.string.toSelectorCase = function (a) {
+      return String(a).replace(/([A-Z])/g, "-$1").toLowerCase();
+    };
+
+    goog.string.toTitleCase = function (a, b) {
+      b = goog.isString(b) ? goog.string.regExpEscape(b) : "\\s";
+      return a.replace(new RegExp("(^" + (b ? "|[" + b + "]+" : "") + ")([a-z])", "g"), function (a, b, e) {
+        return b + e.toUpperCase();
+      });
+    };
+
+    goog.string.capitalize = function (a) {
+      return String(a.charAt(0)).toUpperCase() + String(a.substr(1)).toLowerCase();
+    };
+
+    goog.string.parseInt = function (a) {
+      isFinite(a) && (a = String(a));
+      return goog.isString(a) ? /^\s*-?0x/i.test(a) ? parseInt(a, 16) : parseInt(a, 10) : NaN;
+    };
+
+    goog.string.splitLimit = function (a, b, c) {
+      a = a.split(b);
+
+      for (var d = []; 0 < c && a.length;) {
+        d.push(a.shift()), c--;
+      }
+
+      a.length && d.push(a.join(b));
+      return d;
+    };
+
+    goog.string.lastComponent = function (a, b) {
+      if (b) "string" == typeof b && (b = [b]);else return a;
+
+      for (var c = -1, d = 0; d < b.length; d++) {
+        if ("" != b[d]) {
+          var e = a.lastIndexOf(b[d]);
+          e > c && (c = e);
+        }
+      }
+
+      return -1 == c ? a : a.slice(c + 1);
+    };
+
+    goog.string.editDistance = function (a, b) {
+      var c = [],
+          d = [];
+      if (a == b) return 0;
+      if (!a.length || !b.length) return Math.max(a.length, b.length);
+
+      for (var e = 0; e < b.length + 1; e++) {
+        c[e] = e;
+      }
+
+      for (e = 0; e < a.length; e++) {
+        d[0] = e + 1;
+
+        for (var f = 0; f < b.length; f++) {
+          d[f + 1] = Math.min(d[f] + 1, c[f + 1] + 1, c[f] + Number(a[e] != b[f]));
+        }
+
+        for (f = 0; f < c.length; f++) {
+          c[f] = d[f];
+        }
+      }
+
+      return d[b.length];
+    };
+
+    goog.labs.userAgent.engine = {};
+
+    goog.labs.userAgent.engine.isPresto = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Presto");
+    };
+
+    goog.labs.userAgent.engine.isTrident = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Trident") || goog.labs.userAgent.util.matchUserAgent("MSIE");
+    };
+
+    goog.labs.userAgent.engine.isEdge = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Edge");
+    };
+
+    goog.labs.userAgent.engine.isWebKit = function () {
+      return goog.labs.userAgent.util.matchUserAgentIgnoreCase("WebKit") && !goog.labs.userAgent.engine.isEdge();
+    };
+
+    goog.labs.userAgent.engine.isGecko = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Gecko") && !goog.labs.userAgent.engine.isWebKit() && !goog.labs.userAgent.engine.isTrident() && !goog.labs.userAgent.engine.isEdge();
+    };
+
+    goog.labs.userAgent.engine.getVersion = function () {
+      var a = goog.labs.userAgent.util.getUserAgent();
+
+      if (a) {
+        a = goog.labs.userAgent.util.extractVersionTuples(a);
+        var b = goog.labs.userAgent.engine.getEngineTuple_(a);
+        if (b) return "Gecko" == b[0] ? goog.labs.userAgent.engine.getVersionForKey_(a, "Firefox") : b[1];
+        a = a[0];
+        var c;
+        if (a && (c = a[2]) && (c = /Trident\/([^\s;]+)/.exec(c))) return c[1];
+      }
+
+      return "";
+    };
+
+    goog.labs.userAgent.engine.getEngineTuple_ = function (a) {
+      if (!goog.labs.userAgent.engine.isEdge()) return a[1];
+
+      for (var b = 0; b < a.length; b++) {
+        var c = a[b];
+        if ("Edge" == c[0]) return c;
+      }
+    };
+
+    goog.labs.userAgent.engine.isVersionOrHigher = function (a) {
+      return 0 <= goog.string.compareVersions(goog.labs.userAgent.engine.getVersion(), a);
+    };
+
+    goog.labs.userAgent.engine.getVersionForKey_ = function (a, b) {
+      return (a = goog.array.find(a, function (a) {
+        return b == a[0];
+      })) && a[1] || "";
+    };
+
+    goog.labs.userAgent.platform = {};
+
+    goog.labs.userAgent.platform.isAndroid = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Android");
+    };
+
+    goog.labs.userAgent.platform.isIpod = function () {
+      return goog.labs.userAgent.util.matchUserAgent("iPod");
+    };
+
+    goog.labs.userAgent.platform.isIphone = function () {
+      return goog.labs.userAgent.util.matchUserAgent("iPhone") && !goog.labs.userAgent.util.matchUserAgent("iPod") && !goog.labs.userAgent.util.matchUserAgent("iPad");
+    };
+
+    goog.labs.userAgent.platform.isIpad = function () {
+      return goog.labs.userAgent.util.matchUserAgent("iPad");
+    };
+
+    goog.labs.userAgent.platform.isIos = function () {
+      return goog.labs.userAgent.platform.isIphone() || goog.labs.userAgent.platform.isIpad() || goog.labs.userAgent.platform.isIpod();
+    };
+
+    goog.labs.userAgent.platform.isMacintosh = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Macintosh");
+    };
+
+    goog.labs.userAgent.platform.isLinux = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Linux");
+    };
+
+    goog.labs.userAgent.platform.isWindows = function () {
+      return goog.labs.userAgent.util.matchUserAgent("Windows");
+    };
+
+    goog.labs.userAgent.platform.isChromeOS = function () {
+      return goog.labs.userAgent.util.matchUserAgent("CrOS");
+    };
+
+    goog.labs.userAgent.platform.isChromecast = function () {
+      return goog.labs.userAgent.util.matchUserAgent("CrKey");
+    };
+
+    goog.labs.userAgent.platform.isKaiOS = function () {
+      return goog.labs.userAgent.util.matchUserAgentIgnoreCase("KaiOS");
+    };
+
+    goog.labs.userAgent.platform.isGo2Phone = function () {
+      return goog.labs.userAgent.util.matchUserAgentIgnoreCase("GAFP");
+    };
+
+    goog.labs.userAgent.platform.getVersion = function () {
+      var a = goog.labs.userAgent.util.getUserAgent(),
+          b = "";
+      goog.labs.userAgent.platform.isWindows() ? (b = /Windows (?:NT|Phone) ([0-9.]+)/, b = (a = b.exec(a)) ? a[1] : "0.0") : goog.labs.userAgent.platform.isIos() ? (b = /(?:iPhone|iPod|iPad|CPU)\s+OS\s+(\S+)/, b = (a = b.exec(a)) && a[1].replace(/_/g, ".")) : goog.labs.userAgent.platform.isMacintosh() ? (b = /Mac OS X ([0-9_.]+)/, b = (a = b.exec(a)) ? a[1].replace(/_/g, ".") : "10") : goog.labs.userAgent.platform.isKaiOS() ? (b = /(?:KaiOS)\/(\S+)/i, b = (a = b.exec(a)) && a[1]) : goog.labs.userAgent.platform.isAndroid() ? (b = /Android\s+([^\);]+)(\)|;)/, b = (a = b.exec(a)) && a[1]) : goog.labs.userAgent.platform.isChromeOS() && (b = /(?:CrOS\s+(?:i686|x86_64)\s+([0-9.]+))/, b = (a = b.exec(a)) && a[1]);
+      return b || "";
+    };
+
+    goog.labs.userAgent.platform.isVersionOrHigher = function (a) {
+      return 0 <= goog.string.compareVersions(goog.labs.userAgent.platform.getVersion(), a);
+    };
+
+    goog.reflect = {};
+
+    goog.reflect.object = function (a, b) {
+      return b;
+    };
+
+    goog.reflect.objectProperty = function (a, b) {
+      return a;
+    };
+
+    goog.reflect.sinkValue = function (a) {
+      goog.reflect.sinkValue[" "](a);
+      return a;
+    };
+
+    goog.reflect.sinkValue[" "] = goog.nullFunction;
+
+    goog.reflect.canAccessProperty = function (a, b) {
+      try {
+        return goog.reflect.sinkValue(a[b]), !0;
+      } catch (c) {}
+
+      return !1;
+    };
+
+    goog.reflect.cache = function (a, b, c, d) {
+      d = d ? d(b) : b;
+      return Object.prototype.hasOwnProperty.call(a, d) ? a[d] : a[d] = c(b);
+    };
+
+    goog.userAgent = {};
+    goog.userAgent.ASSUME_IE = !1;
+    goog.userAgent.ASSUME_EDGE = !1;
+    goog.userAgent.ASSUME_GECKO = !1;
+    goog.userAgent.ASSUME_WEBKIT = !1;
+    goog.userAgent.ASSUME_MOBILE_WEBKIT = !1;
+    goog.userAgent.ASSUME_OPERA = !1;
+    goog.userAgent.ASSUME_ANY_VERSION = !1;
+    goog.userAgent.BROWSER_KNOWN_ = goog.userAgent.ASSUME_IE || goog.userAgent.ASSUME_EDGE || goog.userAgent.ASSUME_GECKO || goog.userAgent.ASSUME_MOBILE_WEBKIT || goog.userAgent.ASSUME_WEBKIT || goog.userAgent.ASSUME_OPERA;
+
+    goog.userAgent.getUserAgentString = function () {
+      return goog.labs.userAgent.util.getUserAgent();
+    };
+
+    goog.userAgent.getNavigatorTyped = function () {
+      return goog.global.navigator || null;
+    };
+
+    goog.userAgent.getNavigator = function () {
+      return goog.userAgent.getNavigatorTyped();
+    };
+
+    goog.userAgent.OPERA = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_OPERA : goog.labs.userAgent.browser.isOpera();
+    goog.userAgent.IE = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_IE : goog.labs.userAgent.browser.isIE();
+    goog.userAgent.EDGE = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_EDGE : goog.labs.userAgent.engine.isEdge();
+    goog.userAgent.EDGE_OR_IE = goog.userAgent.EDGE || goog.userAgent.IE;
+    goog.userAgent.GECKO = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_GECKO : goog.labs.userAgent.engine.isGecko();
+    goog.userAgent.WEBKIT = goog.userAgent.BROWSER_KNOWN_ ? goog.userAgent.ASSUME_WEBKIT || goog.userAgent.ASSUME_MOBILE_WEBKIT : goog.labs.userAgent.engine.isWebKit();
+
+    goog.userAgent.isMobile_ = function () {
+      return goog.userAgent.WEBKIT && goog.labs.userAgent.util.matchUserAgent("Mobile");
+    };
+
+    goog.userAgent.MOBILE = goog.userAgent.ASSUME_MOBILE_WEBKIT || goog.userAgent.isMobile_();
+    goog.userAgent.SAFARI = goog.userAgent.WEBKIT;
+
+    goog.userAgent.determinePlatform_ = function () {
+      var a = goog.userAgent.getNavigatorTyped();
+      return a && a.platform || "";
+    };
+
+    goog.userAgent.PLATFORM = goog.userAgent.determinePlatform_();
+    goog.userAgent.ASSUME_MAC = !1;
+    goog.userAgent.ASSUME_WINDOWS = !1;
+    goog.userAgent.ASSUME_LINUX = !1;
+    goog.userAgent.ASSUME_X11 = !1;
+    goog.userAgent.ASSUME_ANDROID = !1;
+    goog.userAgent.ASSUME_IPHONE = !1;
+    goog.userAgent.ASSUME_IPAD = !1;
+    goog.userAgent.ASSUME_IPOD = !1;
+    goog.userAgent.ASSUME_KAIOS = !1;
+    goog.userAgent.ASSUME_GO2PHONE = !1;
+    goog.userAgent.PLATFORM_KNOWN_ = goog.userAgent.ASSUME_MAC || goog.userAgent.ASSUME_WINDOWS || goog.userAgent.ASSUME_LINUX || goog.userAgent.ASSUME_X11 || goog.userAgent.ASSUME_ANDROID || goog.userAgent.ASSUME_IPHONE || goog.userAgent.ASSUME_IPAD || goog.userAgent.ASSUME_IPOD;
+    goog.userAgent.MAC = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_MAC : goog.labs.userAgent.platform.isMacintosh();
+    goog.userAgent.WINDOWS = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_WINDOWS : goog.labs.userAgent.platform.isWindows();
+
+    goog.userAgent.isLegacyLinux_ = function () {
+      return goog.labs.userAgent.platform.isLinux() || goog.labs.userAgent.platform.isChromeOS();
+    };
+
+    goog.userAgent.LINUX = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_LINUX : goog.userAgent.isLegacyLinux_();
+
+    goog.userAgent.isX11_ = function () {
+      var a = goog.userAgent.getNavigatorTyped();
+      return !!a && goog.string.contains(a.appVersion || "", "X11");
+    };
+
+    goog.userAgent.X11 = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_X11 : goog.userAgent.isX11_();
+    goog.userAgent.ANDROID = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_ANDROID : goog.labs.userAgent.platform.isAndroid();
+    goog.userAgent.IPHONE = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPHONE : goog.labs.userAgent.platform.isIphone();
+    goog.userAgent.IPAD = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPAD : goog.labs.userAgent.platform.isIpad();
+    goog.userAgent.IPOD = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPOD : goog.labs.userAgent.platform.isIpod();
+    goog.userAgent.IOS = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_IPHONE || goog.userAgent.ASSUME_IPAD || goog.userAgent.ASSUME_IPOD : goog.labs.userAgent.platform.isIos();
+    goog.userAgent.KAIOS = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_KAIOS : goog.labs.userAgent.platform.isKaiOS();
+    goog.userAgent.GO2PHONE = goog.userAgent.PLATFORM_KNOWN_ ? goog.userAgent.ASSUME_GO2PHONE : goog.labs.userAgent.platform.isGo2Phone();
+
+    goog.userAgent.determineVersion_ = function () {
+      var a = "",
+          b = goog.userAgent.getVersionRegexResult_();
+      b && (a = b ? b[1] : "");
+      return goog.userAgent.IE && (b = goog.userAgent.getDocumentMode_(), null != b && b > parseFloat(a)) ? String(b) : a;
+    };
+
+    goog.userAgent.getVersionRegexResult_ = function () {
+      var a = goog.userAgent.getUserAgentString();
+      if (goog.userAgent.GECKO) return /rv:([^\);]+)(\)|;)/.exec(a);
+      if (goog.userAgent.EDGE) return /Edge\/([\d\.]+)/.exec(a);
+      if (goog.userAgent.IE) return /\b(?:MSIE|rv)[: ]([^\);]+)(\)|;)/.exec(a);
+      if (goog.userAgent.WEBKIT) return /WebKit\/(\S+)/.exec(a);
+      if (goog.userAgent.OPERA) return /(?:Version)[ \/]?(\S+)/.exec(a);
+    };
+
+    goog.userAgent.getDocumentMode_ = function () {
+      var a = goog.global.document;
+      return a ? a.documentMode : void 0;
+    };
+
+    goog.userAgent.VERSION = goog.userAgent.determineVersion_();
+
+    goog.userAgent.compare = function (a, b) {
+      return goog.string.compareVersions(a, b);
+    };
+
+    goog.userAgent.isVersionOrHigherCache_ = {};
+
+    goog.userAgent.isVersionOrHigher = function (a) {
+      return goog.userAgent.ASSUME_ANY_VERSION || goog.reflect.cache(goog.userAgent.isVersionOrHigherCache_, a, function () {
+        return 0 <= goog.string.compareVersions(goog.userAgent.VERSION, a);
+      });
+    };
+
+    goog.userAgent.isVersion = goog.userAgent.isVersionOrHigher;
+
+    goog.userAgent.isDocumentModeOrHigher = function (a) {
+      return Number(goog.userAgent.DOCUMENT_MODE) >= a;
+    };
+
+    goog.userAgent.isDocumentMode = goog.userAgent.isDocumentModeOrHigher;
+
+    goog.userAgent.DOCUMENT_MODE = function () {
+      if (goog.global.document && goog.userAgent.IE) return goog.userAgent.getDocumentMode_();
+    }();
+
+    goog.userAgent.product = {};
+    goog.userAgent.product.ASSUME_FIREFOX = !1;
+    goog.userAgent.product.ASSUME_IPHONE = !1;
+    goog.userAgent.product.ASSUME_IPAD = !1;
+    goog.userAgent.product.ASSUME_ANDROID = !1;
+    goog.userAgent.product.ASSUME_CHROME = !1;
+    goog.userAgent.product.ASSUME_SAFARI = !1;
+    goog.userAgent.product.PRODUCT_KNOWN_ = goog.userAgent.ASSUME_IE || goog.userAgent.ASSUME_EDGE || goog.userAgent.ASSUME_OPERA || goog.userAgent.product.ASSUME_FIREFOX || goog.userAgent.product.ASSUME_IPHONE || goog.userAgent.product.ASSUME_IPAD || goog.userAgent.product.ASSUME_ANDROID || goog.userAgent.product.ASSUME_CHROME || goog.userAgent.product.ASSUME_SAFARI;
+    goog.userAgent.product.OPERA = goog.userAgent.OPERA;
+    goog.userAgent.product.IE = goog.userAgent.IE;
+    goog.userAgent.product.EDGE = goog.userAgent.EDGE;
+    goog.userAgent.product.FIREFOX = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_FIREFOX : goog.labs.userAgent.browser.isFirefox();
+
+    goog.userAgent.product.isIphoneOrIpod_ = function () {
+      return goog.labs.userAgent.platform.isIphone() || goog.labs.userAgent.platform.isIpod();
+    };
+
+    goog.userAgent.product.IPHONE = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_IPHONE : goog.userAgent.product.isIphoneOrIpod_();
+    goog.userAgent.product.IPAD = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_IPAD : goog.labs.userAgent.platform.isIpad();
+    goog.userAgent.product.ANDROID = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_ANDROID : goog.labs.userAgent.browser.isAndroidBrowser();
+    goog.userAgent.product.CHROME = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_CHROME : goog.labs.userAgent.browser.isChrome();
+
+    goog.userAgent.product.isSafariDesktop_ = function () {
+      return goog.labs.userAgent.browser.isSafari() && !goog.labs.userAgent.platform.isIos();
+    };
+
+    goog.userAgent.product.SAFARI = goog.userAgent.product.PRODUCT_KNOWN_ ? goog.userAgent.product.ASSUME_SAFARI : goog.userAgent.product.isSafariDesktop_();
+    goog.crypt.base64 = {};
+    goog.crypt.base64.DEFAULT_ALPHABET_COMMON_ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    goog.crypt.base64.ENCODED_VALS = goog.crypt.base64.DEFAULT_ALPHABET_COMMON_ + "+/=";
+    goog.crypt.base64.ENCODED_VALS_WEBSAFE = goog.crypt.base64.DEFAULT_ALPHABET_COMMON_ + "-_.";
+    goog.crypt.base64.Alphabet = {
+      DEFAULT: 0,
+      NO_PADDING: 1,
+      WEBSAFE: 2,
+      WEBSAFE_DOT_PADDING: 3,
+      WEBSAFE_NO_PADDING: 4
+    };
+    goog.crypt.base64.paddingChars_ = "=.";
+
+    goog.crypt.base64.isPadding_ = function (a) {
+      return goog.string.contains(goog.crypt.base64.paddingChars_, a);
+    };
+
+    goog.crypt.base64.byteToCharMaps_ = {};
+    goog.crypt.base64.charToByteMap_ = null;
+    goog.crypt.base64.ASSUME_NATIVE_SUPPORT_ = goog.userAgent.GECKO || goog.userAgent.WEBKIT && !goog.userAgent.product.SAFARI || goog.userAgent.OPERA;
+    goog.crypt.base64.HAS_NATIVE_ENCODE_ = goog.crypt.base64.ASSUME_NATIVE_SUPPORT_ || "function" == typeof goog.global.btoa;
+    goog.crypt.base64.HAS_NATIVE_DECODE_ = goog.crypt.base64.ASSUME_NATIVE_SUPPORT_ || !goog.userAgent.product.SAFARI && !goog.userAgent.IE && "function" == typeof goog.global.atob;
+
+    goog.crypt.base64.encodeByteArray = function (a, b) {
+      goog.asserts.assert(goog.isArrayLike(a), "encodeByteArray takes an array as a parameter");
+      void 0 === b && (b = goog.crypt.base64.Alphabet.DEFAULT);
+      goog.crypt.base64.init_();
+      b = goog.crypt.base64.byteToCharMaps_[b];
+
+      for (var c = [], d = 0; d < a.length; d += 3) {
+        var e = a[d],
+            f = d + 1 < a.length,
+            g = f ? a[d + 1] : 0,
+            h = d + 2 < a.length,
+            k = h ? a[d + 2] : 0,
+            l = e >> 2;
+        e = (e & 3) << 4 | g >> 4;
+        g = (g & 15) << 2 | k >> 6;
+        k &= 63;
+        h || (k = 64, f || (g = 64));
+        c.push(b[l], b[e], b[g] || "", b[k] || "");
+      }
+
+      return c.join("");
+    };
+
+    goog.crypt.base64.encodeString = function (a, b) {
+      return goog.crypt.base64.HAS_NATIVE_ENCODE_ && !b ? goog.global.btoa(a) : goog.crypt.base64.encodeByteArray(goog.crypt.stringToByteArray(a), b);
+    };
+
+    goog.crypt.base64.decodeString = function (a, b) {
+      if (goog.crypt.base64.HAS_NATIVE_DECODE_ && !b) return goog.global.atob(a);
+      var c = "";
+      goog.crypt.base64.decodeStringInternal_(a, function (a) {
+        c += String.fromCharCode(a);
+      });
+      return c;
+    };
+
+    goog.crypt.base64.decodeStringToByteArray = function (a, b) {
+      var c = [];
+      goog.crypt.base64.decodeStringInternal_(a, function (a) {
+        c.push(a);
+      });
+      return c;
+    };
+
+    goog.crypt.base64.decodeStringToUint8Array = function (a) {
+      goog.asserts.assert(!goog.userAgent.IE || goog.userAgent.isVersionOrHigher("10"), "Browser does not support typed arrays");
+      var b = a.length,
+          c = 3 * b / 4;
+      c % 3 ? c = Math.floor(c) : goog.crypt.base64.isPadding_(a[b - 1]) && (c = goog.crypt.base64.isPadding_(a[b - 2]) ? c - 2 : c - 1);
+      var d = new Uint8Array(c),
+          e = 0;
+      goog.crypt.base64.decodeStringInternal_(a, function (a) {
+        d[e++] = a;
+      });
+      return d.subarray(0, e);
+    };
+
+    goog.crypt.base64.decodeStringInternal_ = function (a, b) {
+      function c(b) {
+        for (; d < a.length;) {
+          var c = a.charAt(d++),
+              e = goog.crypt.base64.charToByteMap_[c];
+          if (null != e) return e;
+          if (!goog.string.isEmptyOrWhitespace(c)) throw Error("Unknown base64 encoding at char: " + c);
+        }
+
+        return b;
+      }
+
+      goog.crypt.base64.init_();
+
+      for (var d = 0;;) {
+        var e = c(-1),
+            f = c(0),
+            g = c(64),
+            h = c(64);
+        if (64 === h && -1 === e) break;
+        b(e << 2 | f >> 4);
+        64 != g && (b(f << 4 & 240 | g >> 2), 64 != h && b(g << 6 & 192 | h));
+      }
+    };
+
+    goog.crypt.base64.init_ = function () {
+      if (!goog.crypt.base64.charToByteMap_) {
+        goog.crypt.base64.charToByteMap_ = {};
+
+        for (var a = goog.crypt.base64.DEFAULT_ALPHABET_COMMON_.split(""), b = ["+/=", "+/", "-_=", "-_.", "-_"], c = 0; 5 > c; c++) {
+          var d = a.concat(b[c].split(""));
+          goog.crypt.base64.byteToCharMaps_[c] = d;
+
+          for (var e = 0; e < d.length; e++) {
+            var f = d[e],
+                g = goog.crypt.base64.charToByteMap_[f];
+            void 0 === g ? goog.crypt.base64.charToByteMap_[f] = e : goog.asserts.assert(g === e);
+          }
+        }
+      }
+    };
+
+    jspb.utils = {};
+    jspb.utils.split64Low = 0;
+    jspb.utils.split64High = 0;
+
+    jspb.utils.splitUint64 = function (a) {
+      var b = a >>> 0;
+      a = Math.floor((a - b) / jspb.BinaryConstants.TWO_TO_32) >>> 0;
+      jspb.utils.split64Low = b;
+      jspb.utils.split64High = a;
+    };
+
+    jspb.utils.splitInt64 = function (a) {
+      var b = 0 > a;
+      a = Math.abs(a);
+      var c = a >>> 0;
+      a = Math.floor((a - c) / jspb.BinaryConstants.TWO_TO_32);
+      a >>>= 0;
+      b && (a = ~a >>> 0, c = (~c >>> 0) + 1, 4294967295 < c && (c = 0, a++, 4294967295 < a && (a = 0)));
+      jspb.utils.split64Low = c;
+      jspb.utils.split64High = a;
+    };
+
+    jspb.utils.splitZigzag64 = function (a) {
+      var b = 0 > a;
+      a = 2 * Math.abs(a);
+      jspb.utils.splitUint64(a);
+      a = jspb.utils.split64Low;
+      var c = jspb.utils.split64High;
+      b && (0 == a ? 0 == c ? c = a = 4294967295 : (c--, a = 4294967295) : a--);
+      jspb.utils.split64Low = a;
+      jspb.utils.split64High = c;
+    };
+
+    jspb.utils.splitFloat32 = function (a) {
+      var b = 0 > a ? 1 : 0;
+      a = b ? -a : a;
+      if (0 === a) 0 < 1 / a ? (jspb.utils.split64High = 0, jspb.utils.split64Low = 0) : (jspb.utils.split64High = 0, jspb.utils.split64Low = 2147483648);else if (isNaN(a)) jspb.utils.split64High = 0, jspb.utils.split64Low = 2147483647;else if (a > jspb.BinaryConstants.FLOAT32_MAX) jspb.utils.split64High = 0, jspb.utils.split64Low = (b << 31 | 2139095040) >>> 0;else if (a < jspb.BinaryConstants.FLOAT32_MIN) a = Math.round(a / Math.pow(2, -149)), jspb.utils.split64High = 0, jspb.utils.split64Low = (b << 31 | a) >>> 0;else {
+        var c = Math.floor(Math.log(a) / Math.LN2);
+        a *= Math.pow(2, -c);
+        a = Math.round(a * jspb.BinaryConstants.TWO_TO_23);
+        16777216 <= a && ++c;
+        jspb.utils.split64High = 0;
+        jspb.utils.split64Low = (b << 31 | c + 127 << 23 | a & 8388607) >>> 0;
+      }
+    };
+
+    jspb.utils.splitFloat64 = function (a) {
+      var b = 0 > a ? 1 : 0;
+      a = b ? -a : a;
+      if (0 === a) jspb.utils.split64High = 0 < 1 / a ? 0 : 2147483648, jspb.utils.split64Low = 0;else if (isNaN(a)) jspb.utils.split64High = 2147483647, jspb.utils.split64Low = 4294967295;else if (a > jspb.BinaryConstants.FLOAT64_MAX) jspb.utils.split64High = (b << 31 | 2146435072) >>> 0, jspb.utils.split64Low = 0;else if (a < jspb.BinaryConstants.FLOAT64_MIN) {
+        var c = a / Math.pow(2, -1074);
+        a = c / jspb.BinaryConstants.TWO_TO_32;
+        jspb.utils.split64High = (b << 31 | a) >>> 0;
+        jspb.utils.split64Low = c >>> 0;
+      } else {
+        c = a;
+        var d = 0;
+        if (2 <= c) for (; 2 <= c && 1023 > d;) {
+          d++, c /= 2;
+        } else for (; 1 > c && -1022 < d;) {
+          c *= 2, d--;
+        }
+        c = a * Math.pow(2, -d);
+        a = c * jspb.BinaryConstants.TWO_TO_20 & 1048575;
+        c = c * jspb.BinaryConstants.TWO_TO_52 >>> 0;
+        jspb.utils.split64High = (b << 31 | d + 1023 << 20 | a) >>> 0;
+        jspb.utils.split64Low = c;
+      }
+    };
+
+    jspb.utils.splitHash64 = function (a) {
+      var b = a.charCodeAt(0),
+          c = a.charCodeAt(1),
+          d = a.charCodeAt(2),
+          e = a.charCodeAt(3),
+          f = a.charCodeAt(4),
+          g = a.charCodeAt(5),
+          h = a.charCodeAt(6);
+      a = a.charCodeAt(7);
+      jspb.utils.split64Low = b + (c << 8) + (d << 16) + (e << 24) >>> 0;
+      jspb.utils.split64High = f + (g << 8) + (h << 16) + (a << 24) >>> 0;
+    };
+
+    jspb.utils.joinUint64 = function (a, b) {
+      return b * jspb.BinaryConstants.TWO_TO_32 + (a >>> 0);
+    };
+
+    jspb.utils.joinInt64 = function (a, b) {
+      var c = b & 2147483648;
+      c && (a = ~a + 1 >>> 0, b = ~b >>> 0, 0 == a && (b = b + 1 >>> 0));
+      a = jspb.utils.joinUint64(a, b);
+      return c ? -a : a;
+    };
+
+    jspb.utils.toZigzag64 = function (a, b, c) {
+      var d = b >> 31;
+      return c(a << 1 ^ d, (b << 1 | a >>> 31) ^ d);
+    };
+
+    jspb.utils.joinZigzag64 = function (a, b) {
+      return jspb.utils.fromZigzag64(a, b, jspb.utils.joinInt64);
+    };
+
+    jspb.utils.fromZigzag64 = function (a, b, c) {
+      var d = -(a & 1);
+      return c((a >>> 1 | b << 31) ^ d, b >>> 1 ^ d);
+    };
+
+    jspb.utils.joinFloat32 = function (a, b) {
+      b = 2 * (a >> 31) + 1;
+      var c = a >>> 23 & 255;
+      a &= 8388607;
+      return 255 == c ? a ? NaN : Infinity * b : 0 == c ? b * Math.pow(2, -149) * a : b * Math.pow(2, c - 150) * (a + Math.pow(2, 23));
+    };
+
+    jspb.utils.joinFloat64 = function (a, b) {
+      var c = 2 * (b >> 31) + 1,
+          d = b >>> 20 & 2047;
+      a = jspb.BinaryConstants.TWO_TO_32 * (b & 1048575) + a;
+      return 2047 == d ? a ? NaN : Infinity * c : 0 == d ? c * Math.pow(2, -1074) * a : c * Math.pow(2, d - 1075) * (a + jspb.BinaryConstants.TWO_TO_52);
+    };
+
+    jspb.utils.joinHash64 = function (a, b) {
+      return String.fromCharCode(a >>> 0 & 255, a >>> 8 & 255, a >>> 16 & 255, a >>> 24 & 255, b >>> 0 & 255, b >>> 8 & 255, b >>> 16 & 255, b >>> 24 & 255);
+    };
+
+    jspb.utils.DIGITS = "0123456789abcdef".split("");
+    jspb.utils.ZERO_CHAR_CODE_ = 48;
+    jspb.utils.A_CHAR_CODE_ = 97;
+
+    jspb.utils.joinUnsignedDecimalString = function (a, b) {
+      function c(a, b) {
+        a = a ? String(a) : "";
+        return b ? "0000000".slice(a.length) + a : a;
+      }
+
+      if (2097151 >= b) return "" + jspb.utils.joinUint64(a, b);
+      var d = (a >>> 24 | b << 8) >>> 0 & 16777215;
+      b = b >> 16 & 65535;
+      a = (a & 16777215) + 6777216 * d + 6710656 * b;
+      d += 8147497 * b;
+      b *= 2;
+      1E7 <= a && (d += Math.floor(a / 1E7), a %= 1E7);
+      1E7 <= d && (b += Math.floor(d / 1E7), d %= 1E7);
+      return c(b, 0) + c(d, b) + c(a, 1);
+    };
+
+    jspb.utils.joinSignedDecimalString = function (a, b) {
+      var c = b & 2147483648;
+      c && (a = ~a + 1 >>> 0, b = ~b + (0 == a ? 1 : 0) >>> 0);
+      a = jspb.utils.joinUnsignedDecimalString(a, b);
+      return c ? "-" + a : a;
+    };
+
+    jspb.utils.hash64ToDecimalString = function (a, b) {
+      jspb.utils.splitHash64(a);
+      a = jspb.utils.split64Low;
+      var c = jspb.utils.split64High;
+      return b ? jspb.utils.joinSignedDecimalString(a, c) : jspb.utils.joinUnsignedDecimalString(a, c);
+    };
+
+    jspb.utils.hash64ArrayToDecimalStrings = function (a, b) {
+      for (var c = Array(a.length), d = 0; d < a.length; d++) {
+        c[d] = jspb.utils.hash64ToDecimalString(a[d], b);
+      }
+
+      return c;
+    };
+
+    jspb.utils.decimalStringToHash64 = function (a) {
+      function b(a, b) {
+        for (var c = 0; 8 > c && (1 !== a || 0 < b); c++) {
+          b = a * e[c] + b, e[c] = b & 255, b >>>= 8;
+        }
+      }
+
+      function c() {
+        for (var a = 0; 8 > a; a++) {
+          e[a] = ~e[a] & 255;
+        }
+      }
+
+      goog.asserts.assert(0 < a.length);
+      var d = !1;
+      "-" === a[0] && (d = !0, a = a.slice(1));
+
+      for (var e = [0, 0, 0, 0, 0, 0, 0, 0], f = 0; f < a.length; f++) {
+        b(10, a.charCodeAt(f) - jspb.utils.ZERO_CHAR_CODE_);
+      }
+
+      d && (c(), b(1, 1));
+      return goog.crypt.byteArrayToString(e);
+    };
+
+    jspb.utils.splitDecimalString = function (a) {
+      jspb.utils.splitHash64(jspb.utils.decimalStringToHash64(a));
+    };
+
+    jspb.utils.toHexDigit_ = function (a) {
+      return String.fromCharCode(10 > a ? jspb.utils.ZERO_CHAR_CODE_ + a : jspb.utils.A_CHAR_CODE_ - 10 + a);
+    };
+
+    jspb.utils.fromHexCharCode_ = function (a) {
+      return a >= jspb.utils.A_CHAR_CODE_ ? a - jspb.utils.A_CHAR_CODE_ + 10 : a - jspb.utils.ZERO_CHAR_CODE_;
+    };
+
+    jspb.utils.hash64ToHexString = function (a) {
+      var b = Array(18);
+      b[0] = "0";
+      b[1] = "x";
+
+      for (var c = 0; 8 > c; c++) {
+        var d = a.charCodeAt(7 - c);
+        b[2 * c + 2] = jspb.utils.toHexDigit_(d >> 4);
+        b[2 * c + 3] = jspb.utils.toHexDigit_(d & 15);
+      }
+
+      return b.join("");
+    };
+
+    jspb.utils.hexStringToHash64 = function (a) {
+      a = a.toLowerCase();
+      goog.asserts.assert(18 == a.length);
+      goog.asserts.assert("0" == a[0]);
+      goog.asserts.assert("x" == a[1]);
+
+      for (var b = "", c = 0; 8 > c; c++) {
+        var d = jspb.utils.fromHexCharCode_(a.charCodeAt(2 * c + 2)),
+            e = jspb.utils.fromHexCharCode_(a.charCodeAt(2 * c + 3));
+        b = String.fromCharCode(16 * d + e) + b;
+      }
+
+      return b;
+    };
+
+    jspb.utils.hash64ToNumber = function (a, b) {
+      jspb.utils.splitHash64(a);
+      a = jspb.utils.split64Low;
+      var c = jspb.utils.split64High;
+      return b ? jspb.utils.joinInt64(a, c) : jspb.utils.joinUint64(a, c);
+    };
+
+    jspb.utils.numberToHash64 = function (a) {
+      jspb.utils.splitInt64(a);
+      return jspb.utils.joinHash64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.utils.countVarints = function (a, b, c) {
+      for (var d = 0, e = b; e < c; e++) {
+        d += a[e] >> 7;
+      }
+
+      return c - b - d;
+    };
+
+    jspb.utils.countVarintFields = function (a, b, c, d) {
+      var e = 0;
+      d = 8 * d + jspb.BinaryConstants.WireType.VARINT;
+      if (128 > d) for (; b < c && a[b++] == d;) {
+        for (e++;;) {
+          var f = a[b++];
+          if (0 == (f & 128)) break;
+        }
+      } else for (; b < c;) {
+        for (f = d; 128 < f;) {
+          if (a[b] != (f & 127 | 128)) return e;
+          b++;
+          f >>= 7;
+        }
+
+        if (a[b++] != f) break;
+
+        for (e++; f = a[b++], 0 != (f & 128);) {
+        }
+      }
+      return e;
+    };
+
+    jspb.utils.countFixedFields_ = function (a, b, c, d, e) {
+      var f = 0;
+      if (128 > d) for (; b < c && a[b++] == d;) {
+        f++, b += e;
+      } else for (; b < c;) {
+        for (var g = d; 128 < g;) {
+          if (a[b++] != (g & 127 | 128)) return f;
+          g >>= 7;
+        }
+
+        if (a[b++] != g) break;
+        f++;
+        b += e;
+      }
+      return f;
+    };
+
+    jspb.utils.countFixed32Fields = function (a, b, c, d) {
+      return jspb.utils.countFixedFields_(a, b, c, 8 * d + jspb.BinaryConstants.WireType.FIXED32, 4);
+    };
+
+    jspb.utils.countFixed64Fields = function (a, b, c, d) {
+      return jspb.utils.countFixedFields_(a, b, c, 8 * d + jspb.BinaryConstants.WireType.FIXED64, 8);
+    };
+
+    jspb.utils.countDelimitedFields = function (a, b, c, d) {
+      var e = 0;
+
+      for (d = 8 * d + jspb.BinaryConstants.WireType.DELIMITED; b < c;) {
+        for (var f = d; 128 < f;) {
+          if (a[b++] != (f & 127 | 128)) return e;
+          f >>= 7;
+        }
+
+        if (a[b++] != f) break;
+        e++;
+
+        for (var g = 0, h = 1; f = a[b++], g += (f & 127) * h, h *= 128, 0 != (f & 128);) {
+        }
+
+        b += g;
+      }
+
+      return e;
+    };
+
+    jspb.utils.debugBytesToTextFormat = function (a) {
+      var b = '"';
+
+      if (a) {
+        a = jspb.utils.byteSourceToUint8Array(a);
+
+        for (var c = 0; c < a.length; c++) {
+          b += "\\x", 16 > a[c] && (b += "0"), b += a[c].toString(16);
+        }
+      }
+
+      return b + '"';
+    };
+
+    jspb.utils.debugScalarToTextFormat = function (a) {
+      return "string" === typeof a ? goog.string.quote(a) : a.toString();
+    };
+
+    jspb.utils.stringToByteArray = function (a) {
+      for (var b = new Uint8Array(a.length), c = 0; c < a.length; c++) {
+        var d = a.charCodeAt(c);
+        if (255 < d) throw Error("Conversion error: string contains codepoint outside of byte range");
+        b[c] = d;
+      }
+
+      return b;
+    };
+
+    jspb.utils.byteSourceToUint8Array = function (a) {
+      if (a.constructor === Uint8Array) return a;
+      if (a.constructor === ArrayBuffer || "undefined" != typeof Buffer$1 && a.constructor === Buffer$1 || a.constructor === Array) return new Uint8Array(a);
+      if (a.constructor === String) return goog.crypt.base64.decodeStringToUint8Array(a);
+      goog.asserts.fail("Type not convertible to Uint8Array.");
+      return new Uint8Array(0);
+    };
+
+    jspb.BinaryDecoder = function (a, b, c) {
+      this.bytes_ = null;
+      this.cursor_ = this.end_ = this.start_ = 0;
+      this.error_ = !1;
+      a && this.setBlock(a, b, c);
+    };
+
+    jspb.BinaryDecoder.instanceCache_ = [];
+
+    jspb.BinaryDecoder.alloc = function (a, b, c) {
+      if (jspb.BinaryDecoder.instanceCache_.length) {
+        var d = jspb.BinaryDecoder.instanceCache_.pop();
+        a && d.setBlock(a, b, c);
+        return d;
+      }
+
+      return new jspb.BinaryDecoder(a, b, c);
+    };
+
+    jspb.BinaryDecoder.prototype.free = function () {
+      this.clear();
+      100 > jspb.BinaryDecoder.instanceCache_.length && jspb.BinaryDecoder.instanceCache_.push(this);
+    };
+
+    jspb.BinaryDecoder.prototype.clone = function () {
+      return jspb.BinaryDecoder.alloc(this.bytes_, this.start_, this.end_ - this.start_);
+    };
+
+    jspb.BinaryDecoder.prototype.clear = function () {
+      this.bytes_ = null;
+      this.cursor_ = this.end_ = this.start_ = 0;
+      this.error_ = !1;
+    };
+
+    jspb.BinaryDecoder.prototype.getBuffer = function () {
+      return this.bytes_;
+    };
+
+    jspb.BinaryDecoder.prototype.setBlock = function (a, b, c) {
+      this.bytes_ = jspb.utils.byteSourceToUint8Array(a);
+      this.start_ = void 0 !== b ? b : 0;
+      this.end_ = void 0 !== c ? this.start_ + c : this.bytes_.length;
+      this.cursor_ = this.start_;
+    };
+
+    jspb.BinaryDecoder.prototype.getEnd = function () {
+      return this.end_;
+    };
+
+    jspb.BinaryDecoder.prototype.setEnd = function (a) {
+      this.end_ = a;
+    };
+
+    jspb.BinaryDecoder.prototype.reset = function () {
+      this.cursor_ = this.start_;
+    };
+
+    jspb.BinaryDecoder.prototype.getCursor = function () {
+      return this.cursor_;
+    };
+
+    jspb.BinaryDecoder.prototype.setCursor = function (a) {
+      this.cursor_ = a;
+    };
+
+    jspb.BinaryDecoder.prototype.advance = function (a) {
+      this.cursor_ += a;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+    };
+
+    jspb.BinaryDecoder.prototype.atEnd = function () {
+      return this.cursor_ == this.end_;
+    };
+
+    jspb.BinaryDecoder.prototype.pastEnd = function () {
+      return this.cursor_ > this.end_;
+    };
+
+    jspb.BinaryDecoder.prototype.getError = function () {
+      return this.error_ || 0 > this.cursor_ || this.cursor_ > this.end_;
+    };
+
+    jspb.BinaryDecoder.prototype.readSplitVarint64 = function (a) {
+      for (var b = 128, c = 0, d = 0, e = 0; 4 > e && 128 <= b; e++) {
+        b = this.bytes_[this.cursor_++], c |= (b & 127) << 7 * e;
+      }
+
+      128 <= b && (b = this.bytes_[this.cursor_++], c |= (b & 127) << 28, d |= (b & 127) >> 4);
+      if (128 <= b) for (e = 0; 5 > e && 128 <= b; e++) {
+        b = this.bytes_[this.cursor_++], d |= (b & 127) << 7 * e + 3;
+      }
+      if (128 > b) return a(c >>> 0, d >>> 0);
+      goog.asserts.fail("Failed to read varint, encoding is invalid.");
+      this.error_ = !0;
+    };
+
+    jspb.BinaryDecoder.prototype.readSplitZigzagVarint64 = function (a) {
+      return this.readSplitVarint64(function (b, c) {
+        return jspb.utils.fromZigzag64(b, c, a);
+      });
+    };
+
+    jspb.BinaryDecoder.prototype.readSplitFixed64 = function (a) {
+      var b = this.bytes_,
+          c = this.cursor_;
+      this.cursor_ += 8;
+
+      for (var d = 0, e = 0, f = c + 7; f >= c; f--) {
+        d = d << 8 | b[f], e = e << 8 | b[f + 4];
+      }
+
+      return a(d, e);
+    };
+
+    jspb.BinaryDecoder.prototype.skipVarint = function () {
+      for (; this.bytes_[this.cursor_] & 128;) {
+        this.cursor_++;
+      }
+
+      this.cursor_++;
+    };
+
+    jspb.BinaryDecoder.prototype.unskipVarint = function (a) {
+      for (; 128 < a;) {
+        this.cursor_--, a >>>= 7;
+      }
+
+      this.cursor_--;
+    };
+
+    jspb.BinaryDecoder.prototype.readUnsignedVarint32 = function () {
+      var a = this.bytes_;
+      var b = a[this.cursor_ + 0];
+      var c = b & 127;
+      if (128 > b) return this.cursor_ += 1, goog.asserts.assert(this.cursor_ <= this.end_), c;
+      b = a[this.cursor_ + 1];
+      c |= (b & 127) << 7;
+      if (128 > b) return this.cursor_ += 2, goog.asserts.assert(this.cursor_ <= this.end_), c;
+      b = a[this.cursor_ + 2];
+      c |= (b & 127) << 14;
+      if (128 > b) return this.cursor_ += 3, goog.asserts.assert(this.cursor_ <= this.end_), c;
+      b = a[this.cursor_ + 3];
+      c |= (b & 127) << 21;
+      if (128 > b) return this.cursor_ += 4, goog.asserts.assert(this.cursor_ <= this.end_), c;
+      b = a[this.cursor_ + 4];
+      c |= (b & 15) << 28;
+      if (128 > b) return this.cursor_ += 5, goog.asserts.assert(this.cursor_ <= this.end_), c >>> 0;
+      this.cursor_ += 5;
+      128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && 128 <= a[this.cursor_++] && goog.asserts.assert(!1);
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return c;
+    };
+
+    jspb.BinaryDecoder.prototype.readSignedVarint32 = jspb.BinaryDecoder.prototype.readUnsignedVarint32;
+
+    jspb.BinaryDecoder.prototype.readUnsignedVarint32String = function () {
+      return this.readUnsignedVarint32().toString();
+    };
+
+    jspb.BinaryDecoder.prototype.readSignedVarint32String = function () {
+      return this.readSignedVarint32().toString();
+    };
+
+    jspb.BinaryDecoder.prototype.readZigzagVarint32 = function () {
+      var a = this.readUnsignedVarint32();
+      return a >>> 1 ^ -(a & 1);
+    };
+
+    jspb.BinaryDecoder.prototype.readUnsignedVarint64 = function () {
+      return this.readSplitVarint64(jspb.utils.joinUint64);
+    };
+
+    jspb.BinaryDecoder.prototype.readUnsignedVarint64String = function () {
+      return this.readSplitVarint64(jspb.utils.joinUnsignedDecimalString);
+    };
+
+    jspb.BinaryDecoder.prototype.readSignedVarint64 = function () {
+      return this.readSplitVarint64(jspb.utils.joinInt64);
+    };
+
+    jspb.BinaryDecoder.prototype.readSignedVarint64String = function () {
+      return this.readSplitVarint64(jspb.utils.joinSignedDecimalString);
+    };
+
+    jspb.BinaryDecoder.prototype.readZigzagVarint64 = function () {
+      return this.readSplitVarint64(jspb.utils.joinZigzag64);
+    };
+
+    jspb.BinaryDecoder.prototype.readZigzagVarintHash64 = function () {
+      return this.readSplitZigzagVarint64(jspb.utils.joinHash64);
+    };
+
+    jspb.BinaryDecoder.prototype.readZigzagVarint64String = function () {
+      return this.readSplitZigzagVarint64(jspb.utils.joinSignedDecimalString);
+    };
+
+    jspb.BinaryDecoder.prototype.readUint8 = function () {
+      var a = this.bytes_[this.cursor_ + 0];
+      this.cursor_ += 1;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return a;
+    };
+
+    jspb.BinaryDecoder.prototype.readUint16 = function () {
+      var a = this.bytes_[this.cursor_ + 0],
+          b = this.bytes_[this.cursor_ + 1];
+      this.cursor_ += 2;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return a << 0 | b << 8;
+    };
+
+    jspb.BinaryDecoder.prototype.readUint32 = function () {
+      var a = this.bytes_[this.cursor_ + 0],
+          b = this.bytes_[this.cursor_ + 1],
+          c = this.bytes_[this.cursor_ + 2],
+          d = this.bytes_[this.cursor_ + 3];
+      this.cursor_ += 4;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return (a << 0 | b << 8 | c << 16 | d << 24) >>> 0;
+    };
+
+    jspb.BinaryDecoder.prototype.readUint64 = function () {
+      var a = this.readUint32(),
+          b = this.readUint32();
+      return jspb.utils.joinUint64(a, b);
+    };
+
+    jspb.BinaryDecoder.prototype.readUint64String = function () {
+      var a = this.readUint32(),
+          b = this.readUint32();
+      return jspb.utils.joinUnsignedDecimalString(a, b);
+    };
+
+    jspb.BinaryDecoder.prototype.readInt8 = function () {
+      var a = this.bytes_[this.cursor_ + 0];
+      this.cursor_ += 1;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return a << 24 >> 24;
+    };
+
+    jspb.BinaryDecoder.prototype.readInt16 = function () {
+      var a = this.bytes_[this.cursor_ + 0],
+          b = this.bytes_[this.cursor_ + 1];
+      this.cursor_ += 2;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return (a << 0 | b << 8) << 16 >> 16;
+    };
+
+    jspb.BinaryDecoder.prototype.readInt32 = function () {
+      var a = this.bytes_[this.cursor_ + 0],
+          b = this.bytes_[this.cursor_ + 1],
+          c = this.bytes_[this.cursor_ + 2],
+          d = this.bytes_[this.cursor_ + 3];
+      this.cursor_ += 4;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return a << 0 | b << 8 | c << 16 | d << 24;
+    };
+
+    jspb.BinaryDecoder.prototype.readInt64 = function () {
+      var a = this.readUint32(),
+          b = this.readUint32();
+      return jspb.utils.joinInt64(a, b);
+    };
+
+    jspb.BinaryDecoder.prototype.readInt64String = function () {
+      var a = this.readUint32(),
+          b = this.readUint32();
+      return jspb.utils.joinSignedDecimalString(a, b);
+    };
+
+    jspb.BinaryDecoder.prototype.readFloat = function () {
+      var a = this.readUint32();
+      return jspb.utils.joinFloat32(a, 0);
+    };
+
+    jspb.BinaryDecoder.prototype.readDouble = function () {
+      var a = this.readUint32(),
+          b = this.readUint32();
+      return jspb.utils.joinFloat64(a, b);
+    };
+
+    jspb.BinaryDecoder.prototype.readBool = function () {
+      return !!this.bytes_[this.cursor_++];
+    };
+
+    jspb.BinaryDecoder.prototype.readEnum = function () {
+      return this.readSignedVarint32();
+    };
+
+    jspb.BinaryDecoder.prototype.readString = function (a) {
+      var b = this.bytes_,
+          c = this.cursor_;
+      a = c + a;
+
+      for (var d = [], e = ""; c < a;) {
+        var f = b[c++];
+        if (128 > f) d.push(f);else if (192 > f) continue;else if (224 > f) {
+          var g = b[c++];
+          d.push((f & 31) << 6 | g & 63);
+        } else if (240 > f) {
+          g = b[c++];
+          var h = b[c++];
+          d.push((f & 15) << 12 | (g & 63) << 6 | h & 63);
+        } else if (248 > f) {
+          g = b[c++];
+          h = b[c++];
+          var k = b[c++];
+          f = (f & 7) << 18 | (g & 63) << 12 | (h & 63) << 6 | k & 63;
+          f -= 65536;
+          d.push((f >> 10 & 1023) + 55296, (f & 1023) + 56320);
+        }
+        8192 <= d.length && (e += String.fromCharCode.apply(null, d), d.length = 0);
+      }
+
+      e += goog.crypt.byteArrayToString(d);
+      this.cursor_ = c;
+      return e;
+    };
+
+    jspb.BinaryDecoder.prototype.readStringWithLength = function () {
+      var a = this.readUnsignedVarint32();
+      return this.readString(a);
+    };
+
+    jspb.BinaryDecoder.prototype.readBytes = function (a) {
+      if (0 > a || this.cursor_ + a > this.bytes_.length) return this.error_ = !0, goog.asserts.fail("Invalid byte length!"), new Uint8Array(0);
+      var b = this.bytes_.subarray(this.cursor_, this.cursor_ + a);
+      this.cursor_ += a;
+      goog.asserts.assert(this.cursor_ <= this.end_);
+      return b;
+    };
+
+    jspb.BinaryDecoder.prototype.readVarintHash64 = function () {
+      return this.readSplitVarint64(jspb.utils.joinHash64);
+    };
+
+    jspb.BinaryDecoder.prototype.readFixedHash64 = function () {
+      var a = this.bytes_,
+          b = this.cursor_,
+          c = a[b + 0],
+          d = a[b + 1],
+          e = a[b + 2],
+          f = a[b + 3],
+          g = a[b + 4],
+          h = a[b + 5],
+          k = a[b + 6];
+      a = a[b + 7];
+      this.cursor_ += 8;
+      return String.fromCharCode(c, d, e, f, g, h, k, a);
+    };
+
+    jspb.BinaryReader = function (a, b, c) {
+      this.decoder_ = jspb.BinaryDecoder.alloc(a, b, c);
+      this.fieldCursor_ = this.decoder_.getCursor();
+      this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
+      this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
+      this.error_ = !1;
+      this.readCallbacks_ = null;
+    };
+
+    jspb.BinaryReader.instanceCache_ = [];
+
+    jspb.BinaryReader.alloc = function (a, b, c) {
+      if (jspb.BinaryReader.instanceCache_.length) {
+        var d = jspb.BinaryReader.instanceCache_.pop();
+        a && d.decoder_.setBlock(a, b, c);
+        return d;
+      }
+
+      return new jspb.BinaryReader(a, b, c);
+    };
+
+    jspb.BinaryReader.prototype.alloc = jspb.BinaryReader.alloc;
+
+    jspb.BinaryReader.prototype.free = function () {
+      this.decoder_.clear();
+      this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
+      this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
+      this.error_ = !1;
+      this.readCallbacks_ = null;
+      100 > jspb.BinaryReader.instanceCache_.length && jspb.BinaryReader.instanceCache_.push(this);
+    };
+
+    jspb.BinaryReader.prototype.getFieldCursor = function () {
+      return this.fieldCursor_;
+    };
+
+    jspb.BinaryReader.prototype.getCursor = function () {
+      return this.decoder_.getCursor();
+    };
+
+    jspb.BinaryReader.prototype.getBuffer = function () {
+      return this.decoder_.getBuffer();
+    };
+
+    jspb.BinaryReader.prototype.getFieldNumber = function () {
+      return this.nextField_;
+    };
+
+    jspb.BinaryReader.prototype.getWireType = function () {
+      return this.nextWireType_;
+    };
+
+    jspb.BinaryReader.prototype.isDelimited = function () {
+      return this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED;
+    };
+
+    jspb.BinaryReader.prototype.isEndGroup = function () {
+      return this.nextWireType_ == jspb.BinaryConstants.WireType.END_GROUP;
+    };
+
+    jspb.BinaryReader.prototype.getError = function () {
+      return this.error_ || this.decoder_.getError();
+    };
+
+    jspb.BinaryReader.prototype.setBlock = function (a, b, c) {
+      this.decoder_.setBlock(a, b, c);
+      this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
+      this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
+    };
+
+    jspb.BinaryReader.prototype.reset = function () {
+      this.decoder_.reset();
+      this.nextField_ = jspb.BinaryConstants.INVALID_FIELD_NUMBER;
+      this.nextWireType_ = jspb.BinaryConstants.WireType.INVALID;
+    };
+
+    jspb.BinaryReader.prototype.advance = function (a) {
+      this.decoder_.advance(a);
+    };
+
+    jspb.BinaryReader.prototype.nextField = function () {
+      if (this.decoder_.atEnd()) return !1;
+      if (this.getError()) return goog.asserts.fail("Decoder hit an error"), !1;
+      this.fieldCursor_ = this.decoder_.getCursor();
+      var a = this.decoder_.readUnsignedVarint32(),
+          b = a >>> 3;
+      a &= 7;
+      if (a != jspb.BinaryConstants.WireType.VARINT && a != jspb.BinaryConstants.WireType.FIXED32 && a != jspb.BinaryConstants.WireType.FIXED64 && a != jspb.BinaryConstants.WireType.DELIMITED && a != jspb.BinaryConstants.WireType.START_GROUP && a != jspb.BinaryConstants.WireType.END_GROUP) return goog.asserts.fail("Invalid wire type: %s (at position %s)", a, this.fieldCursor_), this.error_ = !0, !1;
+      this.nextField_ = b;
+      this.nextWireType_ = a;
+      return !0;
+    };
+
+    jspb.BinaryReader.prototype.unskipHeader = function () {
+      this.decoder_.unskipVarint(this.nextField_ << 3 | this.nextWireType_);
+    };
+
+    jspb.BinaryReader.prototype.skipMatchingFields = function () {
+      var a = this.nextField_;
+
+      for (this.unskipHeader(); this.nextField() && this.getFieldNumber() == a;) {
+        this.skipField();
+      }
+
+      this.decoder_.atEnd() || this.unskipHeader();
+    };
+
+    jspb.BinaryReader.prototype.skipVarintField = function () {
+      this.nextWireType_ != jspb.BinaryConstants.WireType.VARINT ? (goog.asserts.fail("Invalid wire type for skipVarintField"), this.skipField()) : this.decoder_.skipVarint();
+    };
+
+    jspb.BinaryReader.prototype.skipDelimitedField = function () {
+      if (this.nextWireType_ != jspb.BinaryConstants.WireType.DELIMITED) goog.asserts.fail("Invalid wire type for skipDelimitedField"), this.skipField();else {
+        var a = this.decoder_.readUnsignedVarint32();
+        this.decoder_.advance(a);
+      }
+    };
+
+    jspb.BinaryReader.prototype.skipFixed32Field = function () {
+      this.nextWireType_ != jspb.BinaryConstants.WireType.FIXED32 ? (goog.asserts.fail("Invalid wire type for skipFixed32Field"), this.skipField()) : this.decoder_.advance(4);
+    };
+
+    jspb.BinaryReader.prototype.skipFixed64Field = function () {
+      this.nextWireType_ != jspb.BinaryConstants.WireType.FIXED64 ? (goog.asserts.fail("Invalid wire type for skipFixed64Field"), this.skipField()) : this.decoder_.advance(8);
+    };
+
+    jspb.BinaryReader.prototype.skipGroup = function () {
+      var a = this.nextField_;
+
+      do {
+        if (!this.nextField()) {
+          goog.asserts.fail("Unmatched start-group tag: stream EOF");
+          this.error_ = !0;
+          break;
+        }
+
+        if (this.nextWireType_ == jspb.BinaryConstants.WireType.END_GROUP) {
+          this.nextField_ != a && (goog.asserts.fail("Unmatched end-group tag"), this.error_ = !0);
+          break;
+        }
+
+        this.skipField();
+      } while (1);
+    };
+
+    jspb.BinaryReader.prototype.skipField = function () {
+      switch (this.nextWireType_) {
+        case jspb.BinaryConstants.WireType.VARINT:
+          this.skipVarintField();
+          break;
+
+        case jspb.BinaryConstants.WireType.FIXED64:
+          this.skipFixed64Field();
+          break;
+
+        case jspb.BinaryConstants.WireType.DELIMITED:
+          this.skipDelimitedField();
+          break;
+
+        case jspb.BinaryConstants.WireType.FIXED32:
+          this.skipFixed32Field();
+          break;
+
+        case jspb.BinaryConstants.WireType.START_GROUP:
+          this.skipGroup();
+          break;
+
+        default:
+          goog.asserts.fail("Invalid wire encoding for field.");
+      }
+    };
+
+    jspb.BinaryReader.prototype.registerReadCallback = function (a, b) {
+      null === this.readCallbacks_ && (this.readCallbacks_ = {});
+      goog.asserts.assert(!this.readCallbacks_[a]);
+      this.readCallbacks_[a] = b;
+    };
+
+    jspb.BinaryReader.prototype.runReadCallback = function (a) {
+      goog.asserts.assert(null !== this.readCallbacks_);
+      a = this.readCallbacks_[a];
+      goog.asserts.assert(a);
+      return a(this);
+    };
+
+    jspb.BinaryReader.prototype.readAny = function (a) {
+      this.nextWireType_ = jspb.BinaryConstants.FieldTypeToWireType(a);
+      var b = jspb.BinaryConstants.FieldType;
+
+      switch (a) {
+        case b.DOUBLE:
+          return this.readDouble();
+
+        case b.FLOAT:
+          return this.readFloat();
+
+        case b.INT64:
+          return this.readInt64();
+
+        case b.UINT64:
+          return this.readUint64();
+
+        case b.INT32:
+          return this.readInt32();
+
+        case b.FIXED64:
+          return this.readFixed64();
+
+        case b.FIXED32:
+          return this.readFixed32();
+
+        case b.BOOL:
+          return this.readBool();
+
+        case b.STRING:
+          return this.readString();
+
+        case b.GROUP:
+          goog.asserts.fail("Group field type not supported in readAny()");
+
+        case b.MESSAGE:
+          goog.asserts.fail("Message field type not supported in readAny()");
+
+        case b.BYTES:
+          return this.readBytes();
+
+        case b.UINT32:
+          return this.readUint32();
+
+        case b.ENUM:
+          return this.readEnum();
+
+        case b.SFIXED32:
+          return this.readSfixed32();
+
+        case b.SFIXED64:
+          return this.readSfixed64();
+
+        case b.SINT32:
+          return this.readSint32();
+
+        case b.SINT64:
+          return this.readSint64();
+
+        case b.FHASH64:
+          return this.readFixedHash64();
+
+        case b.VHASH64:
+          return this.readVarintHash64();
+
+        default:
+          goog.asserts.fail("Invalid field type in readAny()");
+      }
+
+      return 0;
+    };
+
+    jspb.BinaryReader.prototype.readMessage = function (a, b) {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
+      var c = this.decoder_.getEnd(),
+          d = this.decoder_.readUnsignedVarint32();
+      d = this.decoder_.getCursor() + d;
+      this.decoder_.setEnd(d);
+      b(a, this);
+      this.decoder_.setCursor(d);
+      this.decoder_.setEnd(c);
+    };
+
+    jspb.BinaryReader.prototype.readGroup = function (a, b, c) {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.START_GROUP);
+      goog.asserts.assert(this.nextField_ == a);
+      c(b, this);
+      this.error_ || this.nextWireType_ == jspb.BinaryConstants.WireType.END_GROUP || (goog.asserts.fail("Group submessage did not end with an END_GROUP tag"), this.error_ = !0);
+    };
+
+    jspb.BinaryReader.prototype.getFieldDecoder = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
+      var a = this.decoder_.readUnsignedVarint32(),
+          b = this.decoder_.getCursor(),
+          c = b + a;
+      a = jspb.BinaryDecoder.alloc(this.decoder_.getBuffer(), b, a);
+      this.decoder_.setCursor(c);
+      return a;
+    };
+
+    jspb.BinaryReader.prototype.readInt32 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSignedVarint32();
+    };
+
+    jspb.BinaryReader.prototype.readInt32String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSignedVarint32String();
+    };
+
+    jspb.BinaryReader.prototype.readInt64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSignedVarint64();
+    };
+
+    jspb.BinaryReader.prototype.readInt64String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSignedVarint64String();
+    };
+
+    jspb.BinaryReader.prototype.readUint32 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readUnsignedVarint32();
+    };
+
+    jspb.BinaryReader.prototype.readUint32String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readUnsignedVarint32String();
+    };
+
+    jspb.BinaryReader.prototype.readUint64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readUnsignedVarint64();
+    };
+
+    jspb.BinaryReader.prototype.readUint64String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readUnsignedVarint64String();
+    };
+
+    jspb.BinaryReader.prototype.readSint32 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readZigzagVarint32();
+    };
+
+    jspb.BinaryReader.prototype.readSint64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readZigzagVarint64();
+    };
+
+    jspb.BinaryReader.prototype.readSint64String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readZigzagVarint64String();
+    };
+
+    jspb.BinaryReader.prototype.readFixed32 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
+      return this.decoder_.readUint32();
+    };
+
+    jspb.BinaryReader.prototype.readFixed64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readUint64();
+    };
+
+    jspb.BinaryReader.prototype.readFixed64String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readUint64String();
+    };
+
+    jspb.BinaryReader.prototype.readSfixed32 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
+      return this.decoder_.readInt32();
+    };
+
+    jspb.BinaryReader.prototype.readSfixed32String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
+      return this.decoder_.readInt32().toString();
+    };
+
+    jspb.BinaryReader.prototype.readSfixed64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readInt64();
+    };
+
+    jspb.BinaryReader.prototype.readSfixed64String = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readInt64String();
+    };
+
+    jspb.BinaryReader.prototype.readFloat = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED32);
+      return this.decoder_.readFloat();
+    };
+
+    jspb.BinaryReader.prototype.readDouble = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readDouble();
+    };
+
+    jspb.BinaryReader.prototype.readBool = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return !!this.decoder_.readUnsignedVarint32();
+    };
+
+    jspb.BinaryReader.prototype.readEnum = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSignedVarint64();
+    };
+
+    jspb.BinaryReader.prototype.readString = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
+      var a = this.decoder_.readUnsignedVarint32();
+      return this.decoder_.readString(a);
+    };
+
+    jspb.BinaryReader.prototype.readBytes = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
+      var a = this.decoder_.readUnsignedVarint32();
+      return this.decoder_.readBytes(a);
+    };
+
+    jspb.BinaryReader.prototype.readVarintHash64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readVarintHash64();
+    };
+
+    jspb.BinaryReader.prototype.readSintHash64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readZigzagVarintHash64();
+    };
+
+    jspb.BinaryReader.prototype.readSplitVarint64 = function (a) {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSplitVarint64(a);
+    };
+
+    jspb.BinaryReader.prototype.readSplitZigzagVarint64 = function (a) {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.VARINT);
+      return this.decoder_.readSplitVarint64(function (b, c) {
+        return jspb.utils.fromZigzag64(b, c, a);
+      });
+    };
+
+    jspb.BinaryReader.prototype.readFixedHash64 = function () {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readFixedHash64();
+    };
+
+    jspb.BinaryReader.prototype.readSplitFixed64 = function (a) {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.FIXED64);
+      return this.decoder_.readSplitFixed64(a);
+    };
+
+    jspb.BinaryReader.prototype.readPackedField_ = function (a) {
+      goog.asserts.assert(this.nextWireType_ == jspb.BinaryConstants.WireType.DELIMITED);
+      var b = this.decoder_.readUnsignedVarint32();
+      b = this.decoder_.getCursor() + b;
+
+      for (var c = []; this.decoder_.getCursor() < b;) {
+        c.push(a.call(this.decoder_));
+      }
+
+      return c;
+    };
+
+    jspb.BinaryReader.prototype.readPackedInt32 = function () {
+      return this.readPackedField_(this.decoder_.readSignedVarint32);
+    };
+
+    jspb.BinaryReader.prototype.readPackedInt32String = function () {
+      return this.readPackedField_(this.decoder_.readSignedVarint32String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedInt64 = function () {
+      return this.readPackedField_(this.decoder_.readSignedVarint64);
+    };
+
+    jspb.BinaryReader.prototype.readPackedInt64String = function () {
+      return this.readPackedField_(this.decoder_.readSignedVarint64String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedUint32 = function () {
+      return this.readPackedField_(this.decoder_.readUnsignedVarint32);
+    };
+
+    jspb.BinaryReader.prototype.readPackedUint32String = function () {
+      return this.readPackedField_(this.decoder_.readUnsignedVarint32String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedUint64 = function () {
+      return this.readPackedField_(this.decoder_.readUnsignedVarint64);
+    };
+
+    jspb.BinaryReader.prototype.readPackedUint64String = function () {
+      return this.readPackedField_(this.decoder_.readUnsignedVarint64String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedSint32 = function () {
+      return this.readPackedField_(this.decoder_.readZigzagVarint32);
+    };
+
+    jspb.BinaryReader.prototype.readPackedSint64 = function () {
+      return this.readPackedField_(this.decoder_.readZigzagVarint64);
+    };
+
+    jspb.BinaryReader.prototype.readPackedSint64String = function () {
+      return this.readPackedField_(this.decoder_.readZigzagVarint64String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedFixed32 = function () {
+      return this.readPackedField_(this.decoder_.readUint32);
+    };
+
+    jspb.BinaryReader.prototype.readPackedFixed64 = function () {
+      return this.readPackedField_(this.decoder_.readUint64);
+    };
+
+    jspb.BinaryReader.prototype.readPackedFixed64String = function () {
+      return this.readPackedField_(this.decoder_.readUint64String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedSfixed32 = function () {
+      return this.readPackedField_(this.decoder_.readInt32);
+    };
+
+    jspb.BinaryReader.prototype.readPackedSfixed64 = function () {
+      return this.readPackedField_(this.decoder_.readInt64);
+    };
+
+    jspb.BinaryReader.prototype.readPackedSfixed64String = function () {
+      return this.readPackedField_(this.decoder_.readInt64String);
+    };
+
+    jspb.BinaryReader.prototype.readPackedFloat = function () {
+      return this.readPackedField_(this.decoder_.readFloat);
+    };
+
+    jspb.BinaryReader.prototype.readPackedDouble = function () {
+      return this.readPackedField_(this.decoder_.readDouble);
+    };
+
+    jspb.BinaryReader.prototype.readPackedBool = function () {
+      return this.readPackedField_(this.decoder_.readBool);
+    };
+
+    jspb.BinaryReader.prototype.readPackedEnum = function () {
+      return this.readPackedField_(this.decoder_.readEnum);
+    };
+
+    jspb.BinaryReader.prototype.readPackedVarintHash64 = function () {
+      return this.readPackedField_(this.decoder_.readVarintHash64);
+    };
+
+    jspb.BinaryReader.prototype.readPackedFixedHash64 = function () {
+      return this.readPackedField_(this.decoder_.readFixedHash64);
+    };
+
+    jspb.BinaryEncoder = function () {
+      this.buffer_ = [];
+    };
+
+    jspb.BinaryEncoder.prototype.length = function () {
+      return this.buffer_.length;
+    };
+
+    jspb.BinaryEncoder.prototype.end = function () {
+      var a = this.buffer_;
+      this.buffer_ = [];
+      return a;
+    };
+
+    jspb.BinaryEncoder.prototype.writeSplitVarint64 = function (a, b) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(b == Math.floor(b));
+      goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32);
+
+      for (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32); 0 < b || 127 < a;) {
+        this.buffer_.push(a & 127 | 128), a = (a >>> 7 | b << 25) >>> 0, b >>>= 7;
+      }
+
+      this.buffer_.push(a);
+    };
+
+    jspb.BinaryEncoder.prototype.writeSplitFixed64 = function (a, b) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(b == Math.floor(b));
+      goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32);
+      goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32);
+      this.writeUint32(a);
+      this.writeUint32(b);
+    };
+
+    jspb.BinaryEncoder.prototype.writeUnsignedVarint32 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+
+      for (goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32); 127 < a;) {
+        this.buffer_.push(a & 127 | 128), a >>>= 7;
+      }
+
+      this.buffer_.push(a);
+    };
+
+    jspb.BinaryEncoder.prototype.writeSignedVarint32 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
+      if (0 <= a) this.writeUnsignedVarint32(a);else {
+        for (var b = 0; 9 > b; b++) {
+          this.buffer_.push(a & 127 | 128), a >>= 7;
+        }
+
+        this.buffer_.push(1);
+      }
+    };
+
+    jspb.BinaryEncoder.prototype.writeUnsignedVarint64 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_64);
+      jspb.utils.splitInt64(a);
+      this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeSignedVarint64 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_63 && a < jspb.BinaryConstants.TWO_TO_63);
+      jspb.utils.splitInt64(a);
+      this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeZigzagVarint32 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
+      this.writeUnsignedVarint32((a << 1 ^ a >> 31) >>> 0);
+    };
+
+    jspb.BinaryEncoder.prototype.writeZigzagVarint64 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_63 && a < jspb.BinaryConstants.TWO_TO_63);
+      jspb.utils.splitZigzag64(a);
+      this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeZigzagVarint64String = function (a) {
+      this.writeZigzagVarintHash64(jspb.utils.decimalStringToHash64(a));
+    };
+
+    jspb.BinaryEncoder.prototype.writeZigzagVarintHash64 = function (a) {
+      var b = this;
+      jspb.utils.splitHash64(a);
+      jspb.utils.toZigzag64(jspb.utils.split64Low, jspb.utils.split64High, function (a, d) {
+        b.writeSplitVarint64(a >>> 0, d >>> 0);
+      });
+    };
+
+    jspb.BinaryEncoder.prototype.writeUint8 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(0 <= a && 256 > a);
+      this.buffer_.push(a >>> 0 & 255);
+    };
+
+    jspb.BinaryEncoder.prototype.writeUint16 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(0 <= a && 65536 > a);
+      this.buffer_.push(a >>> 0 & 255);
+      this.buffer_.push(a >>> 8 & 255);
+    };
+
+    jspb.BinaryEncoder.prototype.writeUint32 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_32);
+      this.buffer_.push(a >>> 0 & 255);
+      this.buffer_.push(a >>> 8 & 255);
+      this.buffer_.push(a >>> 16 & 255);
+      this.buffer_.push(a >>> 24 & 255);
+    };
+
+    jspb.BinaryEncoder.prototype.writeUint64 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(0 <= a && a < jspb.BinaryConstants.TWO_TO_64);
+      jspb.utils.splitUint64(a);
+      this.writeUint32(jspb.utils.split64Low);
+      this.writeUint32(jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeInt8 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(-128 <= a && 128 > a);
+      this.buffer_.push(a >>> 0 & 255);
+    };
+
+    jspb.BinaryEncoder.prototype.writeInt16 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(-32768 <= a && 32768 > a);
+      this.buffer_.push(a >>> 0 & 255);
+      this.buffer_.push(a >>> 8 & 255);
+    };
+
+    jspb.BinaryEncoder.prototype.writeInt32 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
+      this.buffer_.push(a >>> 0 & 255);
+      this.buffer_.push(a >>> 8 & 255);
+      this.buffer_.push(a >>> 16 & 255);
+      this.buffer_.push(a >>> 24 & 255);
+    };
+
+    jspb.BinaryEncoder.prototype.writeInt64 = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_63 && a < jspb.BinaryConstants.TWO_TO_63);
+      jspb.utils.splitInt64(a);
+      this.writeSplitFixed64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeInt64String = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(+a >= -jspb.BinaryConstants.TWO_TO_63 && +a < jspb.BinaryConstants.TWO_TO_63);
+      jspb.utils.splitHash64(jspb.utils.decimalStringToHash64(a));
+      this.writeSplitFixed64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeFloat = function (a) {
+      goog.asserts.assert(Infinity === a || -Infinity === a || isNaN(a) || a >= -jspb.BinaryConstants.FLOAT32_MAX && a <= jspb.BinaryConstants.FLOAT32_MAX);
+      jspb.utils.splitFloat32(a);
+      this.writeUint32(jspb.utils.split64Low);
+    };
+
+    jspb.BinaryEncoder.prototype.writeDouble = function (a) {
+      goog.asserts.assert(Infinity === a || -Infinity === a || isNaN(a) || a >= -jspb.BinaryConstants.FLOAT64_MAX && a <= jspb.BinaryConstants.FLOAT64_MAX);
+      jspb.utils.splitFloat64(a);
+      this.writeUint32(jspb.utils.split64Low);
+      this.writeUint32(jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeBool = function (a) {
+      goog.asserts.assert("boolean" === typeof a || "number" === typeof a);
+      this.buffer_.push(a ? 1 : 0);
+    };
+
+    jspb.BinaryEncoder.prototype.writeEnum = function (a) {
+      goog.asserts.assert(a == Math.floor(a));
+      goog.asserts.assert(a >= -jspb.BinaryConstants.TWO_TO_31 && a < jspb.BinaryConstants.TWO_TO_31);
+      this.writeSignedVarint32(a);
+    };
+
+    jspb.BinaryEncoder.prototype.writeBytes = function (a) {
+      this.buffer_.push.apply(this.buffer_, a);
+    };
+
+    jspb.BinaryEncoder.prototype.writeVarintHash64 = function (a) {
+      jspb.utils.splitHash64(a);
+      this.writeSplitVarint64(jspb.utils.split64Low, jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeFixedHash64 = function (a) {
+      jspb.utils.splitHash64(a);
+      this.writeUint32(jspb.utils.split64Low);
+      this.writeUint32(jspb.utils.split64High);
+    };
+
+    jspb.BinaryEncoder.prototype.writeString = function (a) {
+      for (var b = this.buffer_.length, c = 0; c < a.length; c++) {
+        var d = a.charCodeAt(c);
+        if (128 > d) this.buffer_.push(d);else if (2048 > d) this.buffer_.push(d >> 6 | 192), this.buffer_.push(d & 63 | 128);else if (65536 > d) if (55296 <= d && 56319 >= d && c + 1 < a.length) {
+          var e = a.charCodeAt(c + 1);
+          56320 <= e && 57343 >= e && (d = 1024 * (d - 55296) + e - 56320 + 65536, this.buffer_.push(d >> 18 | 240), this.buffer_.push(d >> 12 & 63 | 128), this.buffer_.push(d >> 6 & 63 | 128), this.buffer_.push(d & 63 | 128), c++);
+        } else this.buffer_.push(d >> 12 | 224), this.buffer_.push(d >> 6 & 63 | 128), this.buffer_.push(d & 63 | 128);
+      }
+
+      return this.buffer_.length - b;
+    };
+
+    jspb.arith = {};
+
+    jspb.arith.UInt64 = function (a, b) {
+      this.lo = a;
+      this.hi = b;
+    };
+
+    jspb.arith.UInt64.prototype.cmp = function (a) {
+      return this.hi < a.hi || this.hi == a.hi && this.lo < a.lo ? -1 : this.hi == a.hi && this.lo == a.lo ? 0 : 1;
+    };
+
+    jspb.arith.UInt64.prototype.rightShift = function () {
+      return new jspb.arith.UInt64((this.lo >>> 1 | (this.hi & 1) << 31) >>> 0, this.hi >>> 1 >>> 0);
+    };
+
+    jspb.arith.UInt64.prototype.leftShift = function () {
+      return new jspb.arith.UInt64(this.lo << 1 >>> 0, (this.hi << 1 | this.lo >>> 31) >>> 0);
+    };
+
+    jspb.arith.UInt64.prototype.msb = function () {
+      return !!(this.hi & 2147483648);
+    };
+
+    jspb.arith.UInt64.prototype.lsb = function () {
+      return !!(this.lo & 1);
+    };
+
+    jspb.arith.UInt64.prototype.zero = function () {
+      return 0 == this.lo && 0 == this.hi;
+    };
+
+    jspb.arith.UInt64.prototype.add = function (a) {
+      return new jspb.arith.UInt64((this.lo + a.lo & 4294967295) >>> 0 >>> 0, ((this.hi + a.hi & 4294967295) >>> 0) + (4294967296 <= this.lo + a.lo ? 1 : 0) >>> 0);
+    };
+
+    jspb.arith.UInt64.prototype.sub = function (a) {
+      return new jspb.arith.UInt64((this.lo - a.lo & 4294967295) >>> 0 >>> 0, ((this.hi - a.hi & 4294967295) >>> 0) - (0 > this.lo - a.lo ? 1 : 0) >>> 0);
+    };
+
+    jspb.arith.UInt64.mul32x32 = function (a, b) {
+      var c = a & 65535;
+      a >>>= 16;
+      var d = b & 65535,
+          e = b >>> 16;
+      b = c * d + 65536 * (c * e & 65535) + 65536 * (a * d & 65535);
+
+      for (c = a * e + (c * e >>> 16) + (a * d >>> 16); 4294967296 <= b;) {
+        b -= 4294967296, c += 1;
+      }
+
+      return new jspb.arith.UInt64(b >>> 0, c >>> 0);
+    };
+
+    jspb.arith.UInt64.prototype.mul = function (a) {
+      var b = jspb.arith.UInt64.mul32x32(this.lo, a);
+      a = jspb.arith.UInt64.mul32x32(this.hi, a);
+      a.hi = a.lo;
+      a.lo = 0;
+      return b.add(a);
+    };
+
+    jspb.arith.UInt64.prototype.div = function (a) {
+      if (0 == a) return [];
+      var b = new jspb.arith.UInt64(0, 0),
+          c = new jspb.arith.UInt64(this.lo, this.hi);
+      a = new jspb.arith.UInt64(a, 0);
+
+      for (var d = new jspb.arith.UInt64(1, 0); !a.msb();) {
+        a = a.leftShift(), d = d.leftShift();
+      }
+
+      for (; !d.zero();) {
+        0 >= a.cmp(c) && (b = b.add(d), c = c.sub(a)), a = a.rightShift(), d = d.rightShift();
+      }
+
+      return [b, c];
+    };
+
+    jspb.arith.UInt64.prototype.toString = function () {
+      for (var a = "", b = this; !b.zero();) {
+        b = b.div(10);
+        var c = b[0];
+        a = b[1].lo + a;
+        b = c;
+      }
+
+      "" == a && (a = "0");
+      return a;
+    };
+
+    jspb.arith.UInt64.fromString = function (a) {
+      for (var b = new jspb.arith.UInt64(0, 0), c = new jspb.arith.UInt64(0, 0), d = 0; d < a.length; d++) {
+        if ("0" > a[d] || "9" < a[d]) return null;
+        var e = parseInt(a[d], 10);
+        c.lo = e;
+        b = b.mul(10).add(c);
+      }
+
+      return b;
+    };
+
+    jspb.arith.UInt64.prototype.clone = function () {
+      return new jspb.arith.UInt64(this.lo, this.hi);
+    };
+
+    jspb.arith.Int64 = function (a, b) {
+      this.lo = a;
+      this.hi = b;
+    };
+
+    jspb.arith.Int64.prototype.add = function (a) {
+      return new jspb.arith.Int64((this.lo + a.lo & 4294967295) >>> 0 >>> 0, ((this.hi + a.hi & 4294967295) >>> 0) + (4294967296 <= this.lo + a.lo ? 1 : 0) >>> 0);
+    };
+
+    jspb.arith.Int64.prototype.sub = function (a) {
+      return new jspb.arith.Int64((this.lo - a.lo & 4294967295) >>> 0 >>> 0, ((this.hi - a.hi & 4294967295) >>> 0) - (0 > this.lo - a.lo ? 1 : 0) >>> 0);
+    };
+
+    jspb.arith.Int64.prototype.clone = function () {
+      return new jspb.arith.Int64(this.lo, this.hi);
+    };
+
+    jspb.arith.Int64.prototype.toString = function () {
+      var a = 0 != (this.hi & 2147483648),
+          b = new jspb.arith.UInt64(this.lo, this.hi);
+      a && (b = new jspb.arith.UInt64(0, 0).sub(b));
+      return (a ? "-" : "") + b.toString();
+    };
+
+    jspb.arith.Int64.fromString = function (a) {
+      var b = 0 < a.length && "-" == a[0];
+      b && (a = a.substring(1));
+      a = jspb.arith.UInt64.fromString(a);
+      if (null === a) return null;
+      b && (a = new jspb.arith.UInt64(0, 0).sub(a));
+      return new jspb.arith.Int64(a.lo, a.hi);
+    };
+
+    jspb.BinaryWriter = function () {
+      this.blocks_ = [];
+      this.totalLength_ = 0;
+      this.encoder_ = new jspb.BinaryEncoder();
+      this.bookmarks_ = [];
+    };
+
+    jspb.BinaryWriter.prototype.appendUint8Array_ = function (a) {
+      var b = this.encoder_.end();
+      this.blocks_.push(b);
+      this.blocks_.push(a);
+      this.totalLength_ += b.length + a.length;
+    };
+
+    jspb.BinaryWriter.prototype.beginDelimited_ = function (a) {
+      this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED);
+      a = this.encoder_.end();
+      this.blocks_.push(a);
+      this.totalLength_ += a.length;
+      a.push(this.totalLength_);
+      return a;
+    };
+
+    jspb.BinaryWriter.prototype.endDelimited_ = function (a) {
+      var b = a.pop();
+      b = this.totalLength_ + this.encoder_.length() - b;
+
+      for (goog.asserts.assert(0 <= b); 127 < b;) {
+        a.push(b & 127 | 128), b >>>= 7, this.totalLength_++;
+      }
+
+      a.push(b);
+      this.totalLength_++;
+    };
+
+    jspb.BinaryWriter.prototype.writeSerializedMessage = function (a, b, c) {
+      this.appendUint8Array_(a.subarray(b, c));
+    };
+
+    jspb.BinaryWriter.prototype.maybeWriteSerializedMessage = function (a, b, c) {
+      null != a && null != b && null != c && this.writeSerializedMessage(a, b, c);
+    };
+
+    jspb.BinaryWriter.prototype.reset = function () {
+      this.blocks_ = [];
+      this.encoder_.end();
+      this.totalLength_ = 0;
+      this.bookmarks_ = [];
+    };
+
+    jspb.BinaryWriter.prototype.getResultBuffer = function () {
+      goog.asserts.assert(0 == this.bookmarks_.length);
+
+      for (var a = new Uint8Array(this.totalLength_ + this.encoder_.length()), b = this.blocks_, c = b.length, d = 0, e = 0; e < c; e++) {
+        var f = b[e];
+        a.set(f, d);
+        d += f.length;
+      }
+
+      b = this.encoder_.end();
+      a.set(b, d);
+      d += b.length;
+      goog.asserts.assert(d == a.length);
+      this.blocks_ = [a];
+      return a;
+    };
+
+    jspb.BinaryWriter.prototype.getResultBase64String = function (a) {
+      return goog.crypt.base64.encodeByteArray(this.getResultBuffer(), a);
+    };
+
+    jspb.BinaryWriter.prototype.beginSubMessage = function (a) {
+      this.bookmarks_.push(this.beginDelimited_(a));
+    };
+
+    jspb.BinaryWriter.prototype.endSubMessage = function () {
+      goog.asserts.assert(0 <= this.bookmarks_.length);
+      this.endDelimited_(this.bookmarks_.pop());
+    };
+
+    jspb.BinaryWriter.prototype.writeFieldHeader_ = function (a, b) {
+      goog.asserts.assert(1 <= a && a == Math.floor(a));
+      this.encoder_.writeUnsignedVarint32(8 * a + b);
+    };
+
+    jspb.BinaryWriter.prototype.writeAny = function (a, b, c) {
+      var d = jspb.BinaryConstants.FieldType;
+
+      switch (a) {
+        case d.DOUBLE:
+          this.writeDouble(b, c);
+          break;
+
+        case d.FLOAT:
+          this.writeFloat(b, c);
+          break;
+
+        case d.INT64:
+          this.writeInt64(b, c);
+          break;
+
+        case d.UINT64:
+          this.writeUint64(b, c);
+          break;
+
+        case d.INT32:
+          this.writeInt32(b, c);
+          break;
+
+        case d.FIXED64:
+          this.writeFixed64(b, c);
+          break;
+
+        case d.FIXED32:
+          this.writeFixed32(b, c);
+          break;
+
+        case d.BOOL:
+          this.writeBool(b, c);
+          break;
+
+        case d.STRING:
+          this.writeString(b, c);
+          break;
+
+        case d.GROUP:
+          goog.asserts.fail("Group field type not supported in writeAny()");
+          break;
+
+        case d.MESSAGE:
+          goog.asserts.fail("Message field type not supported in writeAny()");
+          break;
+
+        case d.BYTES:
+          this.writeBytes(b, c);
+          break;
+
+        case d.UINT32:
+          this.writeUint32(b, c);
+          break;
+
+        case d.ENUM:
+          this.writeEnum(b, c);
+          break;
+
+        case d.SFIXED32:
+          this.writeSfixed32(b, c);
+          break;
+
+        case d.SFIXED64:
+          this.writeSfixed64(b, c);
+          break;
+
+        case d.SINT32:
+          this.writeSint32(b, c);
+          break;
+
+        case d.SINT64:
+          this.writeSint64(b, c);
+          break;
+
+        case d.FHASH64:
+          this.writeFixedHash64(b, c);
+          break;
+
+        case d.VHASH64:
+          this.writeVarintHash64(b, c);
+          break;
+
+        default:
+          goog.asserts.fail("Invalid field type in writeAny()");
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeUnsignedVarint32_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeUnsignedVarint32(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSignedVarint32_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint32(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeUnsignedVarint64_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeUnsignedVarint64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSignedVarint64_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeZigzagVarint32_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarint32(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeZigzagVarint64_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarint64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeZigzagVarint64String_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarint64String(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeZigzagVarintHash64_ = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeZigzagVarintHash64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeInt32 = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeSignedVarint32_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeInt32String = function (a, b) {
+      null != b && (b = parseInt(b, 10), goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeSignedVarint32_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeInt64 = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_63 && b < jspb.BinaryConstants.TWO_TO_63), this.writeSignedVarint64_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeInt64String = function (a, b) {
+      null != b && (b = jspb.arith.Int64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSplitVarint64(b.lo, b.hi));
+    };
+
+    jspb.BinaryWriter.prototype.writeUint32 = function (a, b) {
+      null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32), this.writeUnsignedVarint32_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeUint32String = function (a, b) {
+      null != b && (b = parseInt(b, 10), goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32), this.writeUnsignedVarint32_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeUint64 = function (a, b) {
+      null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_64), this.writeUnsignedVarint64_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeUint64String = function (a, b) {
+      null != b && (b = jspb.arith.UInt64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSplitVarint64(b.lo, b.hi));
+    };
+
+    jspb.BinaryWriter.prototype.writeSint32 = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeZigzagVarint32_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSint64 = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_63 && b < jspb.BinaryConstants.TWO_TO_63), this.writeZigzagVarint64_(a, b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSintHash64 = function (a, b) {
+      null != b && this.writeZigzagVarintHash64_(a, b);
+    };
+
+    jspb.BinaryWriter.prototype.writeSint64String = function (a, b) {
+      null != b && this.writeZigzagVarint64String_(a, b);
+    };
+
+    jspb.BinaryWriter.prototype.writeFixed32 = function (a, b) {
+      null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_32), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED32), this.encoder_.writeUint32(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeFixed64 = function (a, b) {
+      null != b && (goog.asserts.assert(0 <= b && b < jspb.BinaryConstants.TWO_TO_64), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeUint64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeFixed64String = function (a, b) {
+      null != b && (b = jspb.arith.UInt64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeSplitFixed64(b.lo, b.hi));
+    };
+
+    jspb.BinaryWriter.prototype.writeSfixed32 = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED32), this.encoder_.writeInt32(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSfixed64 = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_63 && b < jspb.BinaryConstants.TWO_TO_63), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeInt64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSfixed64String = function (a, b) {
+      null != b && (b = jspb.arith.Int64.fromString(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeSplitFixed64(b.lo, b.hi));
+    };
+
+    jspb.BinaryWriter.prototype.writeFloat = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED32), this.encoder_.writeFloat(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeDouble = function (a, b) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeDouble(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeBool = function (a, b) {
+      null != b && (goog.asserts.assert("boolean" === typeof b || "number" === typeof b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeBool(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeEnum = function (a, b) {
+      null != b && (goog.asserts.assert(b >= -jspb.BinaryConstants.TWO_TO_31 && b < jspb.BinaryConstants.TWO_TO_31), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint32(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeString = function (a, b) {
+      null != b && (a = this.beginDelimited_(a), this.encoder_.writeString(b), this.endDelimited_(a));
+    };
+
+    jspb.BinaryWriter.prototype.writeBytes = function (a, b) {
+      null != b && (b = jspb.utils.byteSourceToUint8Array(b), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(b.length), this.appendUint8Array_(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeMessage = function (a, b, c) {
+      null != b && (a = this.beginDelimited_(a), c(b, this), this.endDelimited_(a));
+    };
+
+    jspb.BinaryWriter.prototype.writeMessageSet = function (a, b, c) {
+      null != b && (this.writeFieldHeader_(1, jspb.BinaryConstants.WireType.START_GROUP), this.writeFieldHeader_(2, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeSignedVarint32(a), a = this.beginDelimited_(3), c(b, this), this.endDelimited_(a), this.writeFieldHeader_(1, jspb.BinaryConstants.WireType.END_GROUP));
+    };
+
+    jspb.BinaryWriter.prototype.writeGroup = function (a, b, c) {
+      null != b && (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.START_GROUP), c(b, this), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.END_GROUP));
+    };
+
+    jspb.BinaryWriter.prototype.writeFixedHash64 = function (a, b) {
+      null != b && (goog.asserts.assert(8 == b.length), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64), this.encoder_.writeFixedHash64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeVarintHash64 = function (a, b) {
+      null != b && (goog.asserts.assert(8 == b.length), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT), this.encoder_.writeVarintHash64(b));
+    };
+
+    jspb.BinaryWriter.prototype.writeSplitFixed64 = function (a, b, c) {
+      this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.FIXED64);
+      this.encoder_.writeSplitFixed64(b, c);
+    };
+
+    jspb.BinaryWriter.prototype.writeSplitVarint64 = function (a, b, c) {
+      this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT);
+      this.encoder_.writeSplitVarint64(b, c);
+    };
+
+    jspb.BinaryWriter.prototype.writeSplitZigzagVarint64 = function (a, b, c) {
+      this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.VARINT);
+      var d = this.encoder_;
+      jspb.utils.toZigzag64(b, c, function (a, b) {
+        d.writeSplitVarint64(a >>> 0, b >>> 0);
+      });
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedInt32 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeSignedVarint32_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedInt32String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeInt32String(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedInt64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeSignedVarint64_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSplitFixed64 = function (a, b, c, d) {
+      if (null != b) for (var e = 0; e < b.length; e++) {
+        this.writeSplitFixed64(a, c(b[e]), d(b[e]));
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSplitVarint64 = function (a, b, c, d) {
+      if (null != b) for (var e = 0; e < b.length; e++) {
+        this.writeSplitVarint64(a, c(b[e]), d(b[e]));
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSplitZigzagVarint64 = function (a, b, c, d) {
+      if (null != b) for (var e = 0; e < b.length; e++) {
+        this.writeSplitZigzagVarint64(a, c(b[e]), d(b[e]));
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedInt64String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeInt64String(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedUint32 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeUnsignedVarint32_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedUint32String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeUint32String(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedUint64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeUnsignedVarint64_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedUint64String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeUint64String(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSint32 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeZigzagVarint32_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSint64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeZigzagVarint64_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSint64String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeZigzagVarint64String_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSintHash64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeZigzagVarintHash64_(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedFixed32 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeFixed32(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedFixed64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeFixed64(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedFixed64String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeFixed64String(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSfixed32 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeSfixed32(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSfixed64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeSfixed64(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedSfixed64String = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeSfixed64String(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedFloat = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeFloat(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedDouble = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeDouble(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedBool = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeBool(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedEnum = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeEnum(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedString = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeString(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedBytes = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeBytes(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedMessage = function (a, b, c) {
+      if (null != b) for (var d = 0; d < b.length; d++) {
+        var e = this.beginDelimited_(a);
+        c(b[d], this);
+        this.endDelimited_(e);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedGroup = function (a, b, c) {
+      if (null != b) for (var d = 0; d < b.length; d++) {
+        this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.START_GROUP), c(b[d], this), this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.END_GROUP);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedFixedHash64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeFixedHash64(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writeRepeatedVarintHash64 = function (a, b) {
+      if (null != b) for (var c = 0; c < b.length; c++) {
+        this.writeVarintHash64(a, b[c]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedInt32 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeSignedVarint32(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedInt32String = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeSignedVarint32(parseInt(b[c], 10));
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedInt64 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeSignedVarint64(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSplitFixed64 = function (a, b, c, d) {
+      if (null != b) {
+        a = this.beginDelimited_(a);
+
+        for (var e = 0; e < b.length; e++) {
+          this.encoder_.writeSplitFixed64(c(b[e]), d(b[e]));
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSplitVarint64 = function (a, b, c, d) {
+      if (null != b) {
+        a = this.beginDelimited_(a);
+
+        for (var e = 0; e < b.length; e++) {
+          this.encoder_.writeSplitVarint64(c(b[e]), d(b[e]));
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSplitZigzagVarint64 = function (a, b, c, d) {
+      if (null != b) {
+        a = this.beginDelimited_(a);
+
+        for (var e = this.encoder_, f = 0; f < b.length; f++) {
+          jspb.utils.toZigzag64(c(b[f]), d(b[f]), function (a, b) {
+            e.writeSplitVarint64(a >>> 0, b >>> 0);
+          });
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedInt64String = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          var d = jspb.arith.Int64.fromString(b[c]);
+          this.encoder_.writeSplitVarint64(d.lo, d.hi);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedUint32 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeUnsignedVarint32(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedUint32String = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeUnsignedVarint32(parseInt(b[c], 10));
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedUint64 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeUnsignedVarint64(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedUint64String = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          var d = jspb.arith.UInt64.fromString(b[c]);
+          this.encoder_.writeSplitVarint64(d.lo, d.hi);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSint32 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeZigzagVarint32(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSint64 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeZigzagVarint64(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSint64String = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeZigzagVarintHash64(jspb.utils.decimalStringToHash64(b[c]));
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSintHash64 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeZigzagVarintHash64(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedFixed32 = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(4 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeUint32(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedFixed64 = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeUint64(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedFixed64String = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
+        var c = jspb.arith.UInt64.fromString(b[a]);
+        this.encoder_.writeSplitFixed64(c.lo, c.hi);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSfixed32 = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(4 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeInt32(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSfixed64 = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeInt64(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedSfixed64String = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeInt64String(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedFloat = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(4 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeFloat(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedDouble = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeDouble(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedBool = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeBool(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedEnum = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeEnum(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedFixedHash64 = function (a, b) {
+      if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
+        this.encoder_.writeFixedHash64(b[a]);
+      }
+    };
+
+    jspb.BinaryWriter.prototype.writePackedVarintHash64 = function (a, b) {
+      if (null != b && b.length) {
+        a = this.beginDelimited_(a);
+
+        for (var c = 0; c < b.length; c++) {
+          this.encoder_.writeVarintHash64(b[c]);
+        }
+
+        this.endDelimited_(a);
+      }
+    };
+
+    jspb.Map = function (a, b) {
+      this.arr_ = a;
+      this.valueCtor_ = b;
+      this.map_ = {};
+      this.arrClean = !0;
+      0 < this.arr_.length && this.loadFromArray_();
+    };
+
+    jspb.Map.prototype.loadFromArray_ = function () {
+      for (var a = 0; a < this.arr_.length; a++) {
+        var b = this.arr_[a],
+            c = b[0];
+        this.map_[c.toString()] = new jspb.Map.Entry_(c, b[1]);
+      }
+
+      this.arrClean = !0;
+    };
+
+    jspb.Map.prototype.toArray = function () {
+      if (this.arrClean) {
+        if (this.valueCtor_) {
+          var a = this.map_,
+              b;
+
+          for (b in a) {
+            if (Object.prototype.hasOwnProperty.call(a, b)) {
+              var c = a[b].valueWrapper;
+              c && c.toArray();
+            }
+          }
+        }
+      } else {
+        this.arr_.length = 0;
+        a = this.stringKeys_();
+        a.sort();
+
+        for (b = 0; b < a.length; b++) {
+          var d = this.map_[a[b]];
+          (c = d.valueWrapper) && c.toArray();
+          this.arr_.push([d.key, d.value]);
+        }
+
+        this.arrClean = !0;
+      }
+
+      return this.arr_;
+    };
+
+    jspb.Map.prototype.toObject = function (a, b) {
+      for (var c = this.toArray(), d = [], e = 0; e < c.length; e++) {
+        var f = this.map_[c[e][0].toString()];
+        this.wrapEntry_(f);
+        var g = f.valueWrapper;
+        g ? (goog.asserts.assert(b), d.push([f.key, b(a, g)])) : d.push([f.key, f.value]);
+      }
+
+      return d;
+    };
+
+    jspb.Map.fromObject = function (a, b, c) {
+      b = new jspb.Map([], b);
+
+      for (var d = 0; d < a.length; d++) {
+        var e = a[d][0],
+            f = c(a[d][1]);
+        b.set(e, f);
+      }
+
+      return b;
+    };
+
+    jspb.Map.ArrayIteratorIterable_ = function (a) {
+      this.idx_ = 0;
+      this.arr_ = a;
+    };
+
+    jspb.Map.ArrayIteratorIterable_.prototype.next = function () {
+      return this.idx_ < this.arr_.length ? {
+        done: !1,
+        value: this.arr_[this.idx_++]
+      } : {
+        done: !0,
+        value: void 0
+      };
+    };
+
+    "undefined" != typeof Symbol && (jspb.Map.ArrayIteratorIterable_.prototype[Symbol.iterator] = function () {
+      return this;
+    });
+
+    jspb.Map.prototype.getLength = function () {
+      return this.stringKeys_().length;
+    };
+
+    jspb.Map.prototype.clear = function () {
+      this.map_ = {};
+      this.arrClean = !1;
+    };
+
+    jspb.Map.prototype.del = function (a) {
+      a = a.toString();
+      var b = this.map_.hasOwnProperty(a);
+      delete this.map_[a];
+      this.arrClean = !1;
+      return b;
+    };
+
+    jspb.Map.prototype.getEntryList = function () {
+      var a = [],
+          b = this.stringKeys_();
+      b.sort();
 
       for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeSignedVarint32(b[c]);
+        var d = this.map_[b[c]];
+        a.push([d.key, d.value]);
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return a;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedInt32String = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Map.prototype.entries = function () {
+      var a = [],
+          b = this.stringKeys_();
+      b.sort();
 
       for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeSignedVarint32(parseInt(b[c], 10));
+        var d = this.map_[b[c]];
+        a.push([d.key, this.wrapEntry_(d)]);
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return new jspb.Map.ArrayIteratorIterable_(a);
+    };
 
-  jspb.BinaryWriter.prototype.writePackedInt64 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Map.prototype.keys = function () {
+      var a = [],
+          b = this.stringKeys_();
+      b.sort();
 
       for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeSignedVarint64(b[c]);
+        a.push(this.map_[b[c]].key);
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return new jspb.Map.ArrayIteratorIterable_(a);
+    };
 
-  jspb.BinaryWriter.prototype.writePackedInt64String = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Map.prototype.values = function () {
+      var a = [],
+          b = this.stringKeys_();
+      b.sort();
 
       for (var c = 0; c < b.length; c++) {
-        var d = jspb.arith.Int64.fromString(b[c]);
-        this.encoder_.writeSplitVarint64(d.lo, d.hi);
+        a.push(this.wrapEntry_(this.map_[b[c]]));
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return new jspb.Map.ArrayIteratorIterable_(a);
+    };
 
-  jspb.BinaryWriter.prototype.writePackedUint32 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Map.prototype.forEach = function (a, b) {
+      var c = this.stringKeys_();
+      c.sort();
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeUnsignedVarint32(b[c]);
+      for (var d = 0; d < c.length; d++) {
+        var e = this.map_[c[d]];
+        a.call(b, this.wrapEntry_(e), e.key, this);
+      }
+    };
+
+    jspb.Map.prototype.set = function (a, b) {
+      var c = new jspb.Map.Entry_(a);
+      this.valueCtor_ ? (c.valueWrapper = b, c.value = b.toArray()) : c.value = b;
+      this.map_[a.toString()] = c;
+      this.arrClean = !1;
+      return this;
+    };
+
+    jspb.Map.prototype.wrapEntry_ = function (a) {
+      return this.valueCtor_ ? (a.valueWrapper || (a.valueWrapper = new this.valueCtor_(a.value)), a.valueWrapper) : a.value;
+    };
+
+    jspb.Map.prototype.get = function (a) {
+      if (a = this.map_[a.toString()]) return this.wrapEntry_(a);
+    };
+
+    jspb.Map.prototype.has = function (a) {
+      return a.toString() in this.map_;
+    };
+
+    jspb.Map.prototype.serializeBinary = function (a, b, c, d, e) {
+      var f = this.stringKeys_();
+      f.sort();
+
+      for (var g = 0; g < f.length; g++) {
+        var h = this.map_[f[g]];
+        b.beginSubMessage(a);
+        c.call(b, 1, h.key);
+        this.valueCtor_ ? d.call(b, 2, this.wrapEntry_(h), e) : d.call(b, 2, h.value);
+        b.endSubMessage();
+      }
+    };
+
+    jspb.Map.deserializeBinary = function (a, b, c, d, e, f, g) {
+      for (; b.nextField() && !b.isEndGroup();) {
+        var h = b.getFieldNumber();
+        1 == h ? f = c.call(b) : 2 == h && (a.valueCtor_ ? (goog.asserts.assert(e), g || (g = new a.valueCtor_()), d.call(b, g, e)) : g = d.call(b));
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      goog.asserts.assert(void 0 != f);
+      goog.asserts.assert(void 0 != g);
+      a.set(f, g);
+    };
 
-  jspb.BinaryWriter.prototype.writePackedUint32String = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Map.prototype.stringKeys_ = function () {
+      var a = this.map_,
+          b = [],
+          c;
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeUnsignedVarint32(parseInt(b[c], 10));
+      for (c in a) {
+        Object.prototype.hasOwnProperty.call(a, c) && b.push(c);
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return b;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedUint64 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Map.Entry_ = function (a, b) {
+      this.key = a;
+      this.value = b;
+      this.valueWrapper = void 0;
+    };
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeUnsignedVarint64(b[c]);
+    jspb.ExtensionFieldInfo = function (a, b, c, d, e) {
+      this.fieldIndex = a;
+      this.fieldName = b;
+      this.ctor = c;
+      this.toObjectFn = d;
+      this.isRepeated = e;
+    };
+
+    jspb.ExtensionFieldBinaryInfo = function (a, b, c, d, e, f) {
+      this.fieldInfo = a;
+      this.binaryReaderFn = b;
+      this.binaryWriterFn = c;
+      this.binaryMessageSerializeFn = d;
+      this.binaryMessageDeserializeFn = e;
+      this.isPacked = f;
+    };
+
+    jspb.ExtensionFieldInfo.prototype.isMessageType = function () {
+      return !!this.ctor;
+    };
+
+    jspb.Message = function () {};
+
+    jspb.Message.GENERATE_TO_OBJECT = !0;
+    jspb.Message.GENERATE_FROM_OBJECT = !goog.DISALLOW_TEST_ONLY_CODE;
+    jspb.Message.GENERATE_TO_STRING = !0;
+    jspb.Message.ASSUME_LOCAL_ARRAYS = !1;
+    jspb.Message.SERIALIZE_EMPTY_TRAILING_FIELDS = !0;
+    jspb.Message.SUPPORTS_UINT8ARRAY_ = "function" == typeof Uint8Array;
+
+    jspb.Message.prototype.getJsPbMessageId = function () {
+      return this.messageId_;
+    };
+
+    jspb.Message.getIndex_ = function (a, b) {
+      return b + a.arrayIndexOffset_;
+    };
+
+    jspb.Message.hiddenES6Property_ = function () {};
+
+    jspb.Message.getFieldNumber_ = function (a, b) {
+      return b - a.arrayIndexOffset_;
+    };
+
+    jspb.Message.initialize = function (a, b, c, d, e, f) {
+      a.wrappers_ = null;
+      b || (b = c ? [c] : []);
+      a.messageId_ = c ? String(c) : void 0;
+      a.arrayIndexOffset_ = 0 === c ? -1 : 0;
+      a.array = b;
+      jspb.Message.initPivotAndExtensionObject_(a, d);
+      a.convertedPrimitiveFields_ = {};
+      jspb.Message.SERIALIZE_EMPTY_TRAILING_FIELDS || (a.repeatedFields = e);
+      if (e) for (b = 0; b < e.length; b++) {
+        c = e[b], c < a.pivot_ ? (c = jspb.Message.getIndex_(a, c), a.array[c] = a.array[c] || jspb.Message.EMPTY_LIST_SENTINEL_) : (jspb.Message.maybeInitEmptyExtensionObject_(a), a.extensionObject_[c] = a.extensionObject_[c] || jspb.Message.EMPTY_LIST_SENTINEL_);
+      }
+      if (f && f.length) for (b = 0; b < f.length; b++) {
+        jspb.Message.computeOneofCase(a, f[b]);
+      }
+    };
+
+    jspb.Message.EMPTY_LIST_SENTINEL_ = goog.DEBUG && Object.freeze ? Object.freeze([]) : [];
+
+    jspb.Message.isArray_ = function (a) {
+      return jspb.Message.ASSUME_LOCAL_ARRAYS ? a instanceof Array : Array.isArray(a);
+    };
+
+    jspb.Message.isExtensionObject_ = function (a) {
+      return null !== a && "object" == _typeof(a) && !jspb.Message.isArray_(a) && !(jspb.Message.SUPPORTS_UINT8ARRAY_ && a instanceof Uint8Array);
+    };
+
+    jspb.Message.initPivotAndExtensionObject_ = function (a, b) {
+      var c = a.array.length,
+          d = -1;
+
+      if (c && (d = c - 1, c = a.array[d], jspb.Message.isExtensionObject_(c))) {
+        a.pivot_ = jspb.Message.getFieldNumber_(a, d);
+        a.extensionObject_ = c;
+        return;
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      -1 < b ? (a.pivot_ = Math.max(b, jspb.Message.getFieldNumber_(a, d + 1)), a.extensionObject_ = null) : a.pivot_ = Number.MAX_VALUE;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedUint64String = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Message.maybeInitEmptyExtensionObject_ = function (a) {
+      var b = jspb.Message.getIndex_(a, a.pivot_);
+      a.array[b] || (a.extensionObject_ = a.array[b] = {});
+    };
 
-      for (var c = 0; c < b.length; c++) {
-        var d = jspb.arith.UInt64.fromString(b[c]);
-        this.encoder_.writeSplitVarint64(d.lo, d.hi);
+    jspb.Message.toObjectList = function (a, b, c) {
+      for (var d = [], e = 0; e < a.length; e++) {
+        d[e] = b.call(a[e], c, a[e]);
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return d;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedSint32 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Message.toObjectExtension = function (a, b, c, d, e) {
+      for (var f in c) {
+        var g = c[f],
+            h = d.call(a, g);
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeZigzagVarint32(b[c]);
+        if (null != h) {
+          for (var k in g.fieldName) {
+            if (g.fieldName.hasOwnProperty(k)) break;
+          }
+
+          b[k] = g.toObjectFn ? g.isRepeated ? jspb.Message.toObjectList(h, g.toObjectFn, e) : g.toObjectFn(e, h) : h;
+        }
+      }
+    };
+
+    jspb.Message.serializeBinaryExtensions = function (a, b, c, d) {
+      for (var e in c) {
+        var f = c[e],
+            g = f.fieldInfo;
+        if (!f.binaryWriterFn) throw Error("Message extension present that was generated without binary serialization support");
+        var h = d.call(a, g);
+        if (null != h) if (g.isMessageType()) {
+          if (f.binaryMessageSerializeFn) f.binaryWriterFn.call(b, g.fieldIndex, h, f.binaryMessageSerializeFn);else throw Error("Message extension present holding submessage without binary support enabled, and message is being serialized to binary format");
+        } else f.binaryWriterFn.call(b, g.fieldIndex, h);
+      }
+    };
+
+    jspb.Message.readBinaryExtension = function (a, b, c, d, e) {
+      var f = c[b.getFieldNumber()];
+
+      if (f) {
+        c = f.fieldInfo;
+        if (!f.binaryReaderFn) throw Error("Deserializing extension whose generated code does not support binary format");
+
+        if (c.isMessageType()) {
+          var g = new c.ctor();
+          f.binaryReaderFn.call(b, g, f.binaryMessageDeserializeFn);
+        } else g = f.binaryReaderFn.call(b);
+
+        c.isRepeated && !f.isPacked ? (b = d.call(a, c)) ? b.push(g) : e.call(a, c, [g]) : e.call(a, c, g);
+      } else b.skipField();
+    };
+
+    jspb.Message.getField = function (a, b) {
+      if (b < a.pivot_) {
+        b = jspb.Message.getIndex_(a, b);
+        var c = a.array[b];
+        return c === jspb.Message.EMPTY_LIST_SENTINEL_ ? a.array[b] = [] : c;
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      if (a.extensionObject_) return c = a.extensionObject_[b], c === jspb.Message.EMPTY_LIST_SENTINEL_ ? a.extensionObject_[b] = [] : c;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedSint64 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Message.getRepeatedField = function (a, b) {
+      return jspb.Message.getField(a, b);
+    };
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeZigzagVarint64(b[c]);
+    jspb.Message.getOptionalFloatingPointField = function (a, b) {
+      a = jspb.Message.getField(a, b);
+      return null == a ? a : +a;
+    };
+
+    jspb.Message.getBooleanField = function (a, b) {
+      a = jspb.Message.getField(a, b);
+      return null == a ? a : !!a;
+    };
+
+    jspb.Message.getRepeatedFloatingPointField = function (a, b) {
+      var c = jspb.Message.getRepeatedField(a, b);
+      a.convertedPrimitiveFields_ || (a.convertedPrimitiveFields_ = {});
+
+      if (!a.convertedPrimitiveFields_[b]) {
+        for (var d = 0; d < c.length; d++) {
+          c[d] = +c[d];
+        }
+
+        a.convertedPrimitiveFields_[b] = !0;
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return c;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedSint64String = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Message.getRepeatedBooleanField = function (a, b) {
+      var c = jspb.Message.getRepeatedField(a, b);
+      a.convertedPrimitiveFields_ || (a.convertedPrimitiveFields_ = {});
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeZigzagVarint64(parseInt(b[c], 10));
+      if (!a.convertedPrimitiveFields_[b]) {
+        for (var d = 0; d < c.length; d++) {
+          c[d] = !!c[d];
+        }
+
+        a.convertedPrimitiveFields_[b] = !0;
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return c;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedFixed32 = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(4 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeUint32(b[a]);
-    }
-  };
+    jspb.Message.bytesAsB64 = function (a) {
+      if (null == a || "string" === typeof a) return a;
+      if (jspb.Message.SUPPORTS_UINT8ARRAY_ && a instanceof Uint8Array) return goog.crypt.base64.encodeByteArray(a);
+      goog.asserts.fail("Cannot coerce to b64 string: " + goog.typeOf(a));
+      return null;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedFixed64 = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeUint64(b[a]);
-    }
-  };
+    jspb.Message.bytesAsU8 = function (a) {
+      if (null == a || a instanceof Uint8Array) return a;
+      if ("string" === typeof a) return goog.crypt.base64.decodeStringToUint8Array(a);
+      goog.asserts.fail("Cannot coerce to Uint8Array: " + goog.typeOf(a));
+      return null;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedFixed64String = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
-      var c = jspb.arith.UInt64.fromString(b[a]);
-      this.encoder_.writeSplitFixed64(c.lo, c.hi);
-    }
-  };
+    jspb.Message.bytesListAsB64 = function (a) {
+      jspb.Message.assertConsistentTypes_(a);
+      return a.length && "string" !== typeof a[0] ? goog.array.map(a, jspb.Message.bytesAsB64) : a;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedSfixed32 = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(4 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeInt32(b[a]);
-    }
-  };
+    jspb.Message.bytesListAsU8 = function (a) {
+      jspb.Message.assertConsistentTypes_(a);
+      return !a.length || a[0] instanceof Uint8Array ? a : goog.array.map(a, jspb.Message.bytesAsU8);
+    };
 
-  jspb.BinaryWriter.prototype.writePackedSfixed64 = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeInt64(b[a]);
-    }
-  };
+    jspb.Message.assertConsistentTypes_ = function (a) {
+      if (goog.DEBUG && a && 1 < a.length) {
+        var b = goog.typeOf(a[0]);
+        goog.array.forEach(a, function (a) {
+          goog.typeOf(a) != b && goog.asserts.fail("Inconsistent type in JSPB repeated field array. Got " + goog.typeOf(a) + " expected " + b);
+        });
+      }
+    };
 
-  jspb.BinaryWriter.prototype.writePackedSfixed64String = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeInt64String(b[a]);
-    }
-  };
+    jspb.Message.getFieldWithDefault = function (a, b, c) {
+      a = jspb.Message.getField(a, b);
+      return null == a ? c : a;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedFloat = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(4 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeFloat(b[a]);
-    }
-  };
+    jspb.Message.getBooleanFieldWithDefault = function (a, b, c) {
+      a = jspb.Message.getBooleanField(a, b);
+      return null == a ? c : a;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedDouble = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeDouble(b[a]);
-    }
-  };
+    jspb.Message.getFloatingPointFieldWithDefault = function (a, b, c) {
+      a = jspb.Message.getOptionalFloatingPointField(a, b);
+      return null == a ? c : a;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedBool = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeBool(b[a]);
-    }
-  };
+    jspb.Message.getFieldProto3 = jspb.Message.getFieldWithDefault;
 
-  jspb.BinaryWriter.prototype.writePackedEnum = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Message.getMapField = function (a, b, c, d) {
+      a.wrappers_ || (a.wrappers_ = {});
+      if (b in a.wrappers_) return a.wrappers_[b];
+      var e = jspb.Message.getField(a, b);
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeEnum(b[c]);
+      if (!e) {
+        if (c) return;
+        e = [];
+        jspb.Message.setField(a, b, e);
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return a.wrappers_[b] = new jspb.Map(e, d);
+    };
 
-  jspb.BinaryWriter.prototype.writePackedFixedHash64 = function (a, b) {
-    if (null != b && b.length) for (this.writeFieldHeader_(a, jspb.BinaryConstants.WireType.DELIMITED), this.encoder_.writeUnsignedVarint32(8 * b.length), a = 0; a < b.length; a++) {
-      this.encoder_.writeFixedHash64(b[a]);
-    }
-  };
+    jspb.Message.setField = function (a, b, c) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      b < a.pivot_ ? a.array[jspb.Message.getIndex_(a, b)] = c : (jspb.Message.maybeInitEmptyExtensionObject_(a), a.extensionObject_[b] = c);
+      return a;
+    };
 
-  jspb.BinaryWriter.prototype.writePackedVarintHash64 = function (a, b) {
-    if (null != b && b.length) {
-      a = this.beginDelimited_(a);
+    jspb.Message.setProto3IntField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, 0);
+    };
 
-      for (var c = 0; c < b.length; c++) {
-        this.encoder_.writeVarintHash64(b[c]);
+    jspb.Message.setProto3FloatField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, 0);
+    };
+
+    jspb.Message.setProto3BooleanField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, !1);
+    };
+
+    jspb.Message.setProto3StringField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, "");
+    };
+
+    jspb.Message.setProto3BytesField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, "");
+    };
+
+    jspb.Message.setProto3EnumField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, 0);
+    };
+
+    jspb.Message.setProto3StringIntField = function (a, b, c) {
+      return jspb.Message.setFieldIgnoringDefault_(a, b, c, "0");
+    };
+
+    jspb.Message.setFieldIgnoringDefault_ = function (a, b, c, d) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      c !== d ? jspb.Message.setField(a, b, c) : b < a.pivot_ ? a.array[jspb.Message.getIndex_(a, b)] = null : (jspb.Message.maybeInitEmptyExtensionObject_(a), delete a.extensionObject_[b]);
+      return a;
+    };
+
+    jspb.Message.addToRepeatedField = function (a, b, c, d) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      b = jspb.Message.getRepeatedField(a, b);
+      void 0 != d ? b.splice(d, 0, c) : b.push(c);
+      return a;
+    };
+
+    jspb.Message.setOneofField = function (a, b, c, d) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      (c = jspb.Message.computeOneofCase(a, c)) && c !== b && void 0 !== d && (a.wrappers_ && c in a.wrappers_ && (a.wrappers_[c] = void 0), jspb.Message.setField(a, c, void 0));
+      return jspb.Message.setField(a, b, d);
+    };
+
+    jspb.Message.computeOneofCase = function (a, b) {
+      for (var c, d, e = 0; e < b.length; e++) {
+        var f = b[e],
+            g = jspb.Message.getField(a, f);
+        null != g && (c = f, d = g, jspb.Message.setField(a, f, void 0));
       }
 
-      this.endDelimited_(a);
-    }
-  };
+      return c ? (jspb.Message.setField(a, c, d), c) : 0;
+    };
 
-  jspb.Export = {};
-  var Map$1 = jspb.Map;
-  var Message = jspb.Message;
-  var BinaryReader = jspb.BinaryReader;
-  var BinaryWriter = jspb.BinaryWriter;
-  var ExtensionFieldInfo = jspb.ExtensionFieldInfo;
-  var ExtensionFieldBinaryInfo = jspb.ExtensionFieldBinaryInfo;
-  var exportSymbol = goog.exportSymbol;
-  var inherits = goog.inherits;
-  var object = {
-    extend: goog.object.extend
-  };
-  var typeOf = goog.typeOf;
-  var googleProtobuf = {
-    Map: Map$1,
-    Message: Message,
-    BinaryReader: BinaryReader,
-    BinaryWriter: BinaryWriter,
-    ExtensionFieldInfo: ExtensionFieldInfo,
-    ExtensionFieldBinaryInfo: ExtensionFieldBinaryInfo,
-    exportSymbol: exportSymbol,
-    inherits: inherits,
-    object: object,
-    typeOf: typeOf
-  };
+    jspb.Message.getWrapperField = function (a, b, c, d) {
+      a.wrappers_ || (a.wrappers_ = {});
+
+      if (!a.wrappers_[c]) {
+        var e = jspb.Message.getField(a, c);
+        if (d || e) a.wrappers_[c] = new b(e);
+      }
+
+      return a.wrappers_[c];
+    };
+
+    jspb.Message.getRepeatedWrapperField = function (a, b, c) {
+      jspb.Message.wrapRepeatedField_(a, b, c);
+      b = a.wrappers_[c];
+      b == jspb.Message.EMPTY_LIST_SENTINEL_ && (b = a.wrappers_[c] = []);
+      return b;
+    };
+
+    jspb.Message.wrapRepeatedField_ = function (a, b, c) {
+      a.wrappers_ || (a.wrappers_ = {});
+
+      if (!a.wrappers_[c]) {
+        for (var d = jspb.Message.getRepeatedField(a, c), e = [], f = 0; f < d.length; f++) {
+          e[f] = new b(d[f]);
+        }
+
+        a.wrappers_[c] = e;
+      }
+    };
+
+    jspb.Message.setWrapperField = function (a, b, c) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      a.wrappers_ || (a.wrappers_ = {});
+      var d = c ? c.toArray() : c;
+      a.wrappers_[b] = c;
+      return jspb.Message.setField(a, b, d);
+    };
+
+    jspb.Message.setOneofWrapperField = function (a, b, c, d) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      a.wrappers_ || (a.wrappers_ = {});
+      var e = d ? d.toArray() : d;
+      a.wrappers_[b] = d;
+      return jspb.Message.setOneofField(a, b, c, e);
+    };
+
+    jspb.Message.setRepeatedWrapperField = function (a, b, c) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      a.wrappers_ || (a.wrappers_ = {});
+      c = c || [];
+
+      for (var d = [], e = 0; e < c.length; e++) {
+        d[e] = c[e].toArray();
+      }
+
+      a.wrappers_[b] = c;
+      return jspb.Message.setField(a, b, d);
+    };
+
+    jspb.Message.addToRepeatedWrapperField = function (a, b, c, d, e) {
+      jspb.Message.wrapRepeatedField_(a, d, b);
+      var f = a.wrappers_[b];
+      f || (f = a.wrappers_[b] = []);
+      c = c ? c : new d();
+      a = jspb.Message.getRepeatedField(a, b);
+      void 0 != e ? (f.splice(e, 0, c), a.splice(e, 0, c.toArray())) : (f.push(c), a.push(c.toArray()));
+      return c;
+    };
+
+    jspb.Message.toMap = function (a, b, c, d) {
+      for (var e = {}, f = 0; f < a.length; f++) {
+        e[b.call(a[f])] = c ? c.call(a[f], d, a[f]) : a[f];
+      }
+
+      return e;
+    };
+
+    jspb.Message.prototype.syncMapFields_ = function () {
+      if (this.wrappers_) for (var a in this.wrappers_) {
+        var b = this.wrappers_[a];
+        if (Array.isArray(b)) for (var c = 0; c < b.length; c++) {
+          b[c] && b[c].toArray();
+        } else b && b.toArray();
+      }
+    };
+
+    jspb.Message.prototype.toArray = function () {
+      this.syncMapFields_();
+      return this.array;
+    };
+
+    jspb.Message.GENERATE_TO_STRING && (jspb.Message.prototype.toString = function () {
+      this.syncMapFields_();
+      return this.array.toString();
+    });
+
+    jspb.Message.prototype.getExtension = function (a) {
+      if (this.extensionObject_) {
+        this.wrappers_ || (this.wrappers_ = {});
+        var b = a.fieldIndex;
+
+        if (a.isRepeated) {
+          if (a.isMessageType()) return this.wrappers_[b] || (this.wrappers_[b] = goog.array.map(this.extensionObject_[b] || [], function (b) {
+            return new a.ctor(b);
+          })), this.wrappers_[b];
+        } else if (a.isMessageType()) return !this.wrappers_[b] && this.extensionObject_[b] && (this.wrappers_[b] = new a.ctor(this.extensionObject_[b])), this.wrappers_[b];
+
+        return this.extensionObject_[b];
+      }
+    };
+
+    jspb.Message.prototype.setExtension = function (a, b) {
+      this.wrappers_ || (this.wrappers_ = {});
+      jspb.Message.maybeInitEmptyExtensionObject_(this);
+      var c = a.fieldIndex;
+      a.isRepeated ? (b = b || [], a.isMessageType() ? (this.wrappers_[c] = b, this.extensionObject_[c] = goog.array.map(b, function (a) {
+        return a.toArray();
+      })) : this.extensionObject_[c] = b) : a.isMessageType() ? (this.wrappers_[c] = b, this.extensionObject_[c] = b ? b.toArray() : b) : this.extensionObject_[c] = b;
+      return this;
+    };
+
+    jspb.Message.difference = function (a, b) {
+      if (!(a instanceof b.constructor)) throw Error("Messages have different types.");
+      var c = a.toArray();
+      b = b.toArray();
+      var d = [],
+          e = 0,
+          f = c.length > b.length ? c.length : b.length;
+      a.getJsPbMessageId() && (d[0] = a.getJsPbMessageId(), e = 1);
+
+      for (; e < f; e++) {
+        jspb.Message.compareFields(c[e], b[e]) || (d[e] = b[e]);
+      }
+
+      return new a.constructor(d);
+    };
+
+    jspb.Message.equals = function (a, b) {
+      return a == b || !(!a || !b) && a instanceof b.constructor && jspb.Message.compareFields(a.toArray(), b.toArray());
+    };
+
+    jspb.Message.compareExtensions = function (a, b) {
+      a = a || {};
+      b = b || {};
+      var c = {},
+          d;
+
+      for (d in a) {
+        c[d] = 0;
+      }
+
+      for (d in b) {
+        c[d] = 0;
+      }
+
+      for (d in c) {
+        if (!jspb.Message.compareFields(a[d], b[d])) return !1;
+      }
+
+      return !0;
+    };
+
+    jspb.Message.compareFields = function (a, b) {
+      if (a == b) return !0;
+      if (!goog.isObject(a) || !goog.isObject(b)) return "number" === typeof a && isNaN(a) || "number" === typeof b && isNaN(b) ? String(a) == String(b) : !1;
+      if (a.constructor != b.constructor) return !1;
+
+      if (jspb.Message.SUPPORTS_UINT8ARRAY_ && a.constructor === Uint8Array) {
+        if (a.length != b.length) return !1;
+
+        for (var c = 0; c < a.length; c++) {
+          if (a[c] != b[c]) return !1;
+        }
+
+        return !0;
+      }
+
+      if (a.constructor === Array) {
+        var d = void 0,
+            e = void 0,
+            f = Math.max(a.length, b.length);
+
+        for (c = 0; c < f; c++) {
+          var g = a[c],
+              h = b[c];
+          g && g.constructor == Object && (goog.asserts.assert(void 0 === d), goog.asserts.assert(c === a.length - 1), d = g, g = void 0);
+          h && h.constructor == Object && (goog.asserts.assert(void 0 === e), goog.asserts.assert(c === b.length - 1), e = h, h = void 0);
+          if (!jspb.Message.compareFields(g, h)) return !1;
+        }
+
+        return d || e ? (d = d || {}, e = e || {}, jspb.Message.compareExtensions(d, e)) : !0;
+      }
+
+      if (a.constructor === Object) return jspb.Message.compareExtensions(a, b);
+      throw Error("Invalid type in JSPB array");
+    };
+
+    jspb.Message.prototype.cloneMessage = function () {
+      return jspb.Message.cloneMessage(this);
+    };
+
+    jspb.Message.prototype.clone = function () {
+      return jspb.Message.cloneMessage(this);
+    };
+
+    jspb.Message.clone = function (a) {
+      return jspb.Message.cloneMessage(a);
+    };
+
+    jspb.Message.cloneMessage = function (a) {
+      return new a.constructor(jspb.Message.clone_(a.toArray()));
+    };
+
+    jspb.Message.copyInto = function (a, b) {
+      goog.asserts.assertInstanceof(a, jspb.Message);
+      goog.asserts.assertInstanceof(b, jspb.Message);
+      goog.asserts.assert(a.constructor == b.constructor, "Copy source and target message should have the same type.");
+      a = jspb.Message.clone(a);
+
+      for (var c = b.toArray(), d = a.toArray(), e = c.length = 0; e < d.length; e++) {
+        c[e] = d[e];
+      }
+
+      b.wrappers_ = a.wrappers_;
+      b.extensionObject_ = a.extensionObject_;
+    };
+
+    jspb.Message.clone_ = function (a) {
+      if (Array.isArray(a)) {
+        for (var b = Array(a.length), c = 0; c < a.length; c++) {
+          var d = a[c];
+          null != d && (b[c] = "object" == _typeof(d) ? jspb.Message.clone_(goog.asserts.assert(d)) : d);
+        }
+
+        return b;
+      }
+
+      if (jspb.Message.SUPPORTS_UINT8ARRAY_ && a instanceof Uint8Array) return new Uint8Array(a);
+      b = {};
+
+      for (c in a) {
+        d = a[c], null != d && (b[c] = "object" == _typeof(d) ? jspb.Message.clone_(goog.asserts.assert(d)) : d);
+      }
+
+      return b;
+    };
+
+    jspb.Message.registerMessageType = function (a, b) {
+      b.messageId = a;
+    };
+
+    jspb.Message.messageSetExtensions = {};
+    jspb.Message.messageSetExtensionsBinary = {};
+    jspb.Export = {};
+     (exports.Map = jspb.Map, exports.Message = jspb.Message, exports.BinaryReader = jspb.BinaryReader, exports.BinaryWriter = jspb.BinaryWriter, exports.ExtensionFieldInfo = jspb.ExtensionFieldInfo, exports.ExtensionFieldBinaryInfo = jspb.ExtensionFieldBinaryInfo, exports.exportSymbol = goog.exportSymbol, exports.inherits = goog.inherits, exports.object = {
+      extend: goog.object.extend
+    }, exports.typeOf = goog.typeOf);
+  });
+  var googleProtobuf_1 = googleProtobuf.Map;
+  var googleProtobuf_2 = googleProtobuf.Message;
+  var googleProtobuf_3 = googleProtobuf.BinaryReader;
+  var googleProtobuf_4 = googleProtobuf.BinaryWriter;
+  var googleProtobuf_5 = googleProtobuf.ExtensionFieldInfo;
+  var googleProtobuf_6 = googleProtobuf.ExtensionFieldBinaryInfo;
+  var googleProtobuf_7 = googleProtobuf.exportSymbol;
+  var googleProtobuf_8 = googleProtobuf.inherits;
+  var googleProtobuf_9 = googleProtobuf.object;
+  var googleProtobuf_10 = googleProtobuf.typeOf;
 
   var blockchain_pb = createCommonjsModule(function (module, exports) {
     /**
@@ -37485,43 +39485,31 @@ document.getElementById("create-token").onclick = create_token_click;
     return errorMessage;
   };
   function waterfall(fns) {
-    return (
-      /*#__PURE__*/
-      function () {
-        var _ref2 = _asyncToGenerator(function* (input) {
-          var result = input;
-          var _iteratorNormalCompletion = true;
-          var _didIteratorError = false;
-          var _iteratorError = undefined;
+    return /*#__PURE__*/function () {
+      var _ref2 = _asyncToGenerator(function* (input) {
+        var result = input;
 
-          try {
-            for (var _iterator = fns[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
-              var fn = _step.value;
-              result = yield fn(result);
-            }
-          } catch (err) {
-            _didIteratorError = true;
-            _iteratorError = err;
-          } finally {
-            try {
-              if (!_iteratorNormalCompletion && _iterator["return"] != null) {
-                _iterator["return"]();
-              }
-            } finally {
-              if (_didIteratorError) {
-                throw _iteratorError;
-              }
-            }
+        var _iterator = _createForOfIteratorHelper(fns),
+            _step;
+
+        try {
+          for (_iterator.s(); !(_step = _iterator.n()).done;) {
+            var fn = _step.value;
+            result = yield fn(result);
           }
+        } catch (err) {
+          _iterator.e(err);
+        } finally {
+          _iterator.f();
+        }
 
-          return result;
-        });
+        return result;
+      });
 
-        return function (_x2) {
-          return _ref2.apply(this, arguments);
-        };
-      }()
-    );
+      return function (_x2) {
+        return _ref2.apply(this, arguments);
+      };
+    }();
   }
 
   var inherits_browser = createCommonjsModule(function (module) {
@@ -37557,6 +39545,8 @@ document.getElementById("create-token").onclick = create_token_click;
   });
 
   var safeBuffer = createCommonjsModule(function (module, exports) {
+    /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
+
     /* eslint-disable node/no-deprecated-api */
     var Buffer = bufferEs6.Buffer; // alternative to using Object.keys for old browsers
 
@@ -37576,8 +39566,9 @@ document.getElementById("create-token").onclick = create_token_click;
 
     function SafeBuffer(arg, encodingOrOffset, length) {
       return Buffer(arg, encodingOrOffset, length);
-    } // Copy static methods from Buffer
+    }
 
+    SafeBuffer.prototype = Object.create(Buffer.prototype); // Copy static methods from Buffer
 
     copyProps(Buffer, SafeBuffer);
 
@@ -37626,6 +39617,246 @@ document.getElementById("create-token").onclick = create_token_click;
     };
   });
   var safeBuffer_1 = safeBuffer.Buffer;
+
+  // shim for using process in browser
+  // based off https://github.com/defunctzombie/node-process/blob/master/browser.js
+  function defaultSetTimout() {
+    throw new Error('setTimeout has not been defined');
+  }
+
+  function defaultClearTimeout() {
+    throw new Error('clearTimeout has not been defined');
+  }
+
+  var cachedSetTimeout = defaultSetTimout;
+  var cachedClearTimeout = defaultClearTimeout;
+
+  if (typeof global$1.setTimeout === 'function') {
+    cachedSetTimeout = setTimeout;
+  }
+
+  if (typeof global$1.clearTimeout === 'function') {
+    cachedClearTimeout = clearTimeout;
+  }
+
+  function runTimeout(fun) {
+    if (cachedSetTimeout === setTimeout) {
+      //normal enviroments in sane situations
+      return setTimeout(fun, 0);
+    } // if setTimeout wasn't available but was latter defined
+
+
+    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
+      cachedSetTimeout = setTimeout;
+      return setTimeout(fun, 0);
+    }
+
+    try {
+      // when when somebody has screwed with setTimeout but no I.E. maddness
+      return cachedSetTimeout(fun, 0);
+    } catch (e) {
+      try {
+        // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
+        return cachedSetTimeout.call(null, fun, 0);
+      } catch (e) {
+        // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
+        return cachedSetTimeout.call(this, fun, 0);
+      }
+    }
+  }
+
+  function runClearTimeout(marker) {
+    if (cachedClearTimeout === clearTimeout) {
+      //normal enviroments in sane situations
+      return clearTimeout(marker);
+    } // if clearTimeout wasn't available but was latter defined
+
+
+    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
+      cachedClearTimeout = clearTimeout;
+      return clearTimeout(marker);
+    }
+
+    try {
+      // when when somebody has screwed with setTimeout but no I.E. maddness
+      return cachedClearTimeout(marker);
+    } catch (e) {
+      try {
+        // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
+        return cachedClearTimeout.call(null, marker);
+      } catch (e) {
+        // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
+        // Some versions of I.E. have different rules for clearTimeout vs setTimeout
+        return cachedClearTimeout.call(this, marker);
+      }
+    }
+  }
+
+  var queue = [];
+  var draining = false;
+  var currentQueue;
+  var queueIndex = -1;
+
+  function cleanUpNextTick() {
+    if (!draining || !currentQueue) {
+      return;
+    }
+
+    draining = false;
+
+    if (currentQueue.length) {
+      queue = currentQueue.concat(queue);
+    } else {
+      queueIndex = -1;
+    }
+
+    if (queue.length) {
+      drainQueue();
+    }
+  }
+
+  function drainQueue() {
+    if (draining) {
+      return;
+    }
+
+    var timeout = runTimeout(cleanUpNextTick);
+    draining = true;
+    var len = queue.length;
+
+    while (len) {
+      currentQueue = queue;
+      queue = [];
+
+      while (++queueIndex < len) {
+        if (currentQueue) {
+          currentQueue[queueIndex].run();
+        }
+      }
+
+      queueIndex = -1;
+      len = queue.length;
+    }
+
+    currentQueue = null;
+    draining = false;
+    runClearTimeout(timeout);
+  }
+
+  function nextTick(fun) {
+    var args = new Array(arguments.length - 1);
+
+    if (arguments.length > 1) {
+      for (var i = 1; i < arguments.length; i++) {
+        args[i - 1] = arguments[i];
+      }
+    }
+
+    queue.push(new Item(fun, args));
+
+    if (queue.length === 1 && !draining) {
+      runTimeout(drainQueue);
+    }
+  } // v8 likes predictible objects
+
+  function Item(fun, array) {
+    this.fun = fun;
+    this.array = array;
+  }
+
+  Item.prototype.run = function () {
+    this.fun.apply(null, this.array);
+  };
+
+  var title = 'browser';
+  var platform = 'browser';
+  var browser = true;
+  var env = {};
+  var argv = [];
+  var version = ''; // empty string to avoid regexp issues
+
+  var versions = {};
+  var release = {};
+  var config = {};
+
+  function noop() {}
+
+  var on = noop;
+  var addListener = noop;
+  var once = noop;
+  var off = noop;
+  var removeListener = noop;
+  var removeAllListeners = noop;
+  var emit = noop;
+  function binding(name) {
+    throw new Error('process.binding is not supported');
+  }
+  function cwd() {
+    return '/';
+  }
+  function chdir(dir) {
+    throw new Error('process.chdir is not supported');
+  }
+  function umask() {
+    return 0;
+  } // from https://github.com/kumavis/browser-process-hrtime/blob/master/index.js
+
+  var performance = global$1.performance || {};
+
+  var performanceNow = performance.now || performance.mozNow || performance.msNow || performance.oNow || performance.webkitNow || function () {
+    return new Date().getTime();
+  }; // generate timestamp or delta
+  // see http://nodejs.org/api/process.html#process_process_hrtime
+
+
+  function hrtime(previousTimestamp) {
+    var clocktime = performanceNow.call(performance) * 1e-3;
+    var seconds = Math.floor(clocktime);
+    var nanoseconds = Math.floor(clocktime % 1 * 1e9);
+
+    if (previousTimestamp) {
+      seconds = seconds - previousTimestamp[0];
+      nanoseconds = nanoseconds - previousTimestamp[1];
+
+      if (nanoseconds < 0) {
+        seconds--;
+        nanoseconds += 1e9;
+      }
+    }
+
+    return [seconds, nanoseconds];
+  }
+  var startTime = new Date();
+  function uptime() {
+    var currentTime = new Date();
+    var dif = currentTime - startTime;
+    return dif / 1000;
+  }
+  var process = {
+    nextTick: nextTick,
+    title: title,
+    browser: browser,
+    env: env,
+    argv: argv,
+    version: version,
+    versions: versions,
+    on: on,
+    addListener: addListener,
+    once: once,
+    off: off,
+    removeListener: removeListener,
+    removeAllListeners: removeAllListeners,
+    emit: emit,
+    binding: binding,
+    cwd: cwd,
+    chdir: chdir,
+    umask: umask,
+    hrtime: hrtime,
+    platform: platform,
+    release: release,
+    config: config,
+    uptime: uptime
+  };
 
   var domain; // This constructor is used to store event handlers. Instantiating this is
   // faster than explicitly calling `Object.create(null)` to get a "clean" empty
@@ -38069,166 +40300,12 @@ document.getElementById("create-token").onclick = create_token_click;
     return ret;
   }
 
-  // shim for using process in browser
-  // based off https://github.com/defunctzombie/node-process/blob/master/browser.js
-  function defaultSetTimout() {
-    throw new Error('setTimeout has not been defined');
-  }
+  var streamBrowser = EventEmitter.EventEmitter;
 
-  function defaultClearTimeout() {
-    throw new Error('clearTimeout has not been defined');
-  }
-
-  var cachedSetTimeout = defaultSetTimout;
-  var cachedClearTimeout = defaultClearTimeout;
-
-  if (typeof global$1.setTimeout === 'function') {
-    cachedSetTimeout = setTimeout;
-  }
-
-  if (typeof global$1.clearTimeout === 'function') {
-    cachedClearTimeout = clearTimeout;
-  }
-
-  function runTimeout(fun) {
-    if (cachedSetTimeout === setTimeout) {
-      //normal enviroments in sane situations
-      return setTimeout(fun, 0);
-    } // if setTimeout wasn't available but was latter defined
-
-
-    if ((cachedSetTimeout === defaultSetTimout || !cachedSetTimeout) && setTimeout) {
-      cachedSetTimeout = setTimeout;
-      return setTimeout(fun, 0);
-    }
-
-    try {
-      // when when somebody has screwed with setTimeout but no I.E. maddness
-      return cachedSetTimeout(fun, 0);
-    } catch (e) {
-      try {
-        // When we are in I.E. but the script has been evaled so I.E. doesn't trust the global object when called normally
-        return cachedSetTimeout.call(null, fun, 0);
-      } catch (e) {
-        // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error
-        return cachedSetTimeout.call(this, fun, 0);
-      }
-    }
-  }
-
-  function runClearTimeout(marker) {
-    if (cachedClearTimeout === clearTimeout) {
-      //normal enviroments in sane situations
-      return clearTimeout(marker);
-    } // if clearTimeout wasn't available but was latter defined
-
-
-    if ((cachedClearTimeout === defaultClearTimeout || !cachedClearTimeout) && clearTimeout) {
-      cachedClearTimeout = clearTimeout;
-      return clearTimeout(marker);
-    }
-
-    try {
-      // when when somebody has screwed with setTimeout but no I.E. maddness
-      return cachedClearTimeout(marker);
-    } catch (e) {
-      try {
-        // When we are in I.E. but the script has been evaled so I.E. doesn't  trust the global object when called normally
-        return cachedClearTimeout.call(null, marker);
-      } catch (e) {
-        // same as above but when it's a version of I.E. that must have the global object for 'this', hopfully our context correct otherwise it will throw a global error.
-        // Some versions of I.E. have different rules for clearTimeout vs setTimeout
-        return cachedClearTimeout.call(this, marker);
-      }
-    }
-  }
-
-  var queue = [];
-  var draining = false;
-  var currentQueue;
-  var queueIndex = -1;
-
-  function cleanUpNextTick() {
-    if (!draining || !currentQueue) {
-      return;
-    }
-
-    draining = false;
-
-    if (currentQueue.length) {
-      queue = currentQueue.concat(queue);
-    } else {
-      queueIndex = -1;
-    }
-
-    if (queue.length) {
-      drainQueue();
-    }
-  }
-
-  function drainQueue() {
-    if (draining) {
-      return;
-    }
-
-    var timeout = runTimeout(cleanUpNextTick);
-    draining = true;
-    var len = queue.length;
-
-    while (len) {
-      currentQueue = queue;
-      queue = [];
-
-      while (++queueIndex < len) {
-        if (currentQueue) {
-          currentQueue[queueIndex].run();
-        }
-      }
-
-      queueIndex = -1;
-      len = queue.length;
-    }
-
-    currentQueue = null;
-    draining = false;
-    runClearTimeout(timeout);
-  }
-
-  function nextTick(fun) {
-    var args = new Array(arguments.length - 1);
-
-    if (arguments.length > 1) {
-      for (var i = 1; i < arguments.length; i++) {
-        args[i - 1] = arguments[i];
-      }
-    }
-
-    queue.push(new Item(fun, args));
-
-    if (queue.length === 1 && !draining) {
-      runTimeout(drainQueue);
-    }
-  } // v8 likes predictible objects
-
-  function Item(fun, array) {
-    this.fun = fun;
-    this.array = array;
-  }
-
-  Item.prototype.run = function () {
-    this.fun.apply(null, this.array);
-  };
-
-  var performance = global$1.performance || {};
-
-  var performanceNow = performance.now || performance.mozNow || performance.msNow || performance.oNow || performance.webkitNow || function () {
-    return new Date().getTime();
-  }; // generate timestamp or delta
-
-  var inherits$1;
+  var inherits;
 
   if (typeof Object.create === 'function') {
-    inherits$1 = function inherits(ctor, superCtor) {
+    inherits = function inherits(ctor, superCtor) {
       // implementation from standard node.js 'util' module
       ctor.super_ = superCtor;
       ctor.prototype = Object.create(superCtor.prototype, {
@@ -38241,7 +40318,7 @@ document.getElementById("create-token").onclick = create_token_click;
       });
     };
   } else {
-    inherits$1 = function inherits(ctor, superCtor) {
+    inherits = function inherits(ctor, superCtor) {
       ctor.super_ = superCtor;
 
       var TempCtor = function TempCtor() {};
@@ -38252,7 +40329,7 @@ document.getElementById("create-token").onclick = create_token_click;
     };
   }
 
-  var inherits$2 = inherits$1;
+  var inherits$1 = inherits;
 
   var formatRegExp = /%[sdj%]/g;
   function format(f) {
@@ -38676,11 +40753,17 @@ document.getElementById("create-token").onclick = create_token_click;
   function isNull(arg) {
     return arg === null;
   }
+  function isNullOrUndefined(arg) {
+    return arg == null;
+  }
   function isNumber(arg) {
     return typeof arg === 'number';
   }
   function isString(arg) {
     return typeof arg === 'string';
+  }
+  function isSymbol(arg) {
+    return _typeof(arg) === 'symbol';
   }
   function isUndefined(arg) {
     return arg === void 0;
@@ -38700,9 +40783,33 @@ document.getElementById("create-token").onclick = create_token_click;
   function isFunction(arg) {
     return typeof arg === 'function';
   }
+  function isPrimitive(arg) {
+    return arg === null || typeof arg === 'boolean' || typeof arg === 'number' || typeof arg === 'string' || _typeof(arg) === 'symbol' || // ES6 symbol
+    typeof arg === 'undefined';
+  }
+  function isBuffer$1(maybeBuf) {
+    return isBuffer(maybeBuf);
+  }
 
   function objectToString(o) {
     return Object.prototype.toString.call(o);
+  }
+
+  function pad(n) {
+    return n < 10 ? '0' + n.toString(10) : n.toString(10);
+  }
+
+  var months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; // 26 Feb 16:19:34
+
+  function timestamp() {
+    var d = new Date();
+    var time = [pad(d.getHours()), pad(d.getMinutes()), pad(d.getSeconds())].join(':');
+    return [d.getDate(), months[d.getMonth()], time].join(' ');
+  } // log is just a thin wrapper to console.log that prepends a timestamp
+
+
+  function log() {
+    console.log('%s - %s', timestamp(), format.apply(null, arguments));
   }
   function _extend(origin, add) {
     // Don't do anything if add isn't an object
@@ -38721,76 +40828,1400 @@ document.getElementById("create-token").onclick = create_token_click;
     return Object.prototype.hasOwnProperty.call(obj, prop);
   }
 
-  function BufferList() {
-    this.head = null;
-    this.tail = null;
-    this.length = 0;
+  var debugUtil = {
+    inherits: inherits$1,
+    _extend: _extend,
+    log: log,
+    isBuffer: isBuffer$1,
+    isPrimitive: isPrimitive,
+    isFunction: isFunction,
+    isError: isError,
+    isDate: isDate,
+    isObject: isObject,
+    isRegExp: isRegExp,
+    isUndefined: isUndefined,
+    isSymbol: isSymbol,
+    isString: isString,
+    isNumber: isNumber,
+    isNullOrUndefined: isNullOrUndefined,
+    isNull: isNull,
+    isBoolean: isBoolean,
+    isArray: isArray$1,
+    inspect: inspect,
+    deprecate: deprecate,
+    format: format,
+    debuglog: debuglog
+  };
+
+  function ownKeys$1(object, enumerableOnly) {
+    var keys = Object.keys(object);
+
+    if (Object.getOwnPropertySymbols) {
+      var symbols = Object.getOwnPropertySymbols(object);
+      if (enumerableOnly) symbols = symbols.filter(function (sym) {
+        return Object.getOwnPropertyDescriptor(object, sym).enumerable;
+      });
+      keys.push.apply(keys, symbols);
+    }
+
+    return keys;
   }
 
-  BufferList.prototype.push = function (v) {
-    var entry = {
-      data: v,
-      next: null
-    };
-    if (this.length > 0) this.tail.next = entry;else this.head = entry;
-    this.tail = entry;
-    ++this.length;
+  function _objectSpread(target) {
+    for (var i = 1; i < arguments.length; i++) {
+      var source = arguments[i] != null ? arguments[i] : {};
+
+      if (i % 2) {
+        ownKeys$1(Object(source), true).forEach(function (key) {
+          _defineProperty$1(target, key, source[key]);
+        });
+      } else if (Object.getOwnPropertyDescriptors) {
+        Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+      } else {
+        ownKeys$1(Object(source)).forEach(function (key) {
+          Object.defineProperty(target, key, Object.getOwnPropertyDescriptor(source, key));
+        });
+      }
+    }
+
+    return target;
+  }
+
+  function _defineProperty$1(obj, key, value) {
+    if (key in obj) {
+      Object.defineProperty(obj, key, {
+        value: value,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    } else {
+      obj[key] = value;
+    }
+
+    return obj;
+  }
+
+  function _classCallCheck$1(instance, Constructor) {
+    if (!(instance instanceof Constructor)) {
+      throw new TypeError("Cannot call a class as a function");
+    }
+  }
+
+  function _defineProperties$1(target, props) {
+    for (var i = 0; i < props.length; i++) {
+      var descriptor = props[i];
+      descriptor.enumerable = descriptor.enumerable || false;
+      descriptor.configurable = true;
+      if ("value" in descriptor) descriptor.writable = true;
+      Object.defineProperty(target, descriptor.key, descriptor);
+    }
+  }
+
+  function _createClass$1(Constructor, protoProps, staticProps) {
+    if (protoProps) _defineProperties$1(Constructor.prototype, protoProps);
+    if (staticProps) _defineProperties$1(Constructor, staticProps);
+    return Constructor;
+  }
+
+  var Buffer$2 = bufferEs6.Buffer;
+  var inspect$1 = debugUtil.inspect;
+  var custom = inspect$1 && inspect$1.custom || 'inspect';
+
+  function copyBuffer(src, target, offset) {
+    Buffer$2.prototype.copy.call(src, target, offset);
+  }
+
+  var buffer_list = /*#__PURE__*/function () {
+    function BufferList() {
+      _classCallCheck$1(this, BufferList);
+
+      this.head = null;
+      this.tail = null;
+      this.length = 0;
+    }
+
+    _createClass$1(BufferList, [{
+      key: "push",
+      value: function push(v) {
+        var entry = {
+          data: v,
+          next: null
+        };
+        if (this.length > 0) this.tail.next = entry;else this.head = entry;
+        this.tail = entry;
+        ++this.length;
+      }
+    }, {
+      key: "unshift",
+      value: function unshift(v) {
+        var entry = {
+          data: v,
+          next: this.head
+        };
+        if (this.length === 0) this.tail = entry;
+        this.head = entry;
+        ++this.length;
+      }
+    }, {
+      key: "shift",
+      value: function shift() {
+        if (this.length === 0) return;
+        var ret = this.head.data;
+        if (this.length === 1) this.head = this.tail = null;else this.head = this.head.next;
+        --this.length;
+        return ret;
+      }
+    }, {
+      key: "clear",
+      value: function clear() {
+        this.head = this.tail = null;
+        this.length = 0;
+      }
+    }, {
+      key: "join",
+      value: function join(s) {
+        if (this.length === 0) return '';
+        var p = this.head;
+        var ret = '' + p.data;
+
+        while (p = p.next) {
+          ret += s + p.data;
+        }
+
+        return ret;
+      }
+    }, {
+      key: "concat",
+      value: function concat(n) {
+        if (this.length === 0) return Buffer$2.alloc(0);
+        var ret = Buffer$2.allocUnsafe(n >>> 0);
+        var p = this.head;
+        var i = 0;
+
+        while (p) {
+          copyBuffer(p.data, ret, i);
+          i += p.data.length;
+          p = p.next;
+        }
+
+        return ret;
+      } // Consumes a specified amount of bytes or characters from the buffered data.
+
+    }, {
+      key: "consume",
+      value: function consume(n, hasStrings) {
+        var ret;
+
+        if (n < this.head.data.length) {
+          // `slice` is the same for buffers and strings.
+          ret = this.head.data.slice(0, n);
+          this.head.data = this.head.data.slice(n);
+        } else if (n === this.head.data.length) {
+          // First chunk is a perfect match.
+          ret = this.shift();
+        } else {
+          // Result spans more than one buffer.
+          ret = hasStrings ? this._getString(n) : this._getBuffer(n);
+        }
+
+        return ret;
+      }
+    }, {
+      key: "first",
+      value: function first() {
+        return this.head.data;
+      } // Consumes a specified amount of characters from the buffered data.
+
+    }, {
+      key: "_getString",
+      value: function _getString(n) {
+        var p = this.head;
+        var c = 1;
+        var ret = p.data;
+        n -= ret.length;
+
+        while (p = p.next) {
+          var str = p.data;
+          var nb = n > str.length ? str.length : n;
+          if (nb === str.length) ret += str;else ret += str.slice(0, n);
+          n -= nb;
+
+          if (n === 0) {
+            if (nb === str.length) {
+              ++c;
+              if (p.next) this.head = p.next;else this.head = this.tail = null;
+            } else {
+              this.head = p;
+              p.data = str.slice(nb);
+            }
+
+            break;
+          }
+
+          ++c;
+        }
+
+        this.length -= c;
+        return ret;
+      } // Consumes a specified amount of bytes from the buffered data.
+
+    }, {
+      key: "_getBuffer",
+      value: function _getBuffer(n) {
+        var ret = Buffer$2.allocUnsafe(n);
+        var p = this.head;
+        var c = 1;
+        p.data.copy(ret);
+        n -= p.data.length;
+
+        while (p = p.next) {
+          var buf = p.data;
+          var nb = n > buf.length ? buf.length : n;
+          buf.copy(ret, ret.length - n, 0, nb);
+          n -= nb;
+
+          if (n === 0) {
+            if (nb === buf.length) {
+              ++c;
+              if (p.next) this.head = p.next;else this.head = this.tail = null;
+            } else {
+              this.head = p;
+              p.data = buf.slice(nb);
+            }
+
+            break;
+          }
+
+          ++c;
+        }
+
+        this.length -= c;
+        return ret;
+      } // Make sure the linked list only shows the minimal necessary information.
+
+    }, {
+      key: custom,
+      value: function value(_, options) {
+        return inspect$1(this, _objectSpread({}, options, {
+          // Only inspect one level.
+          depth: 0,
+          // It should not recurse.
+          customInspect: false
+        }));
+      }
+    }]);
+
+    return BufferList;
+  }();
+
+  function destroy(err, cb) {
+    var _this = this;
+
+    var readableDestroyed = this._readableState && this._readableState.destroyed;
+    var writableDestroyed = this._writableState && this._writableState.destroyed;
+
+    if (readableDestroyed || writableDestroyed) {
+      if (cb) {
+        cb(err);
+      } else if (err) {
+        if (!this._writableState) {
+          nextTick(emitErrorNT, this, err);
+        } else if (!this._writableState.errorEmitted) {
+          this._writableState.errorEmitted = true;
+          nextTick(emitErrorNT, this, err);
+        }
+      }
+
+      return this;
+    } // we set destroyed to true before firing error callbacks in order
+    // to make it re-entrance safe in case destroy() is called within callbacks
+
+
+    if (this._readableState) {
+      this._readableState.destroyed = true;
+    } // if this is a duplex stream mark the writable part as destroyed as well
+
+
+    if (this._writableState) {
+      this._writableState.destroyed = true;
+    }
+
+    this._destroy(err || null, function (err) {
+      if (!cb && err) {
+        if (!_this._writableState) {
+          nextTick(emitErrorAndCloseNT, _this, err);
+        } else if (!_this._writableState.errorEmitted) {
+          _this._writableState.errorEmitted = true;
+          nextTick(emitErrorAndCloseNT, _this, err);
+        } else {
+          nextTick(emitCloseNT, _this);
+        }
+      } else if (cb) {
+        nextTick(emitCloseNT, _this);
+        cb(err);
+      } else {
+        nextTick(emitCloseNT, _this);
+      }
+    });
+
+    return this;
+  }
+
+  function emitErrorAndCloseNT(self, err) {
+    emitErrorNT(self, err);
+    emitCloseNT(self);
+  }
+
+  function emitCloseNT(self) {
+    if (self._writableState && !self._writableState.emitClose) return;
+    if (self._readableState && !self._readableState.emitClose) return;
+    self.emit('close');
+  }
+
+  function undestroy() {
+    if (this._readableState) {
+      this._readableState.destroyed = false;
+      this._readableState.reading = false;
+      this._readableState.ended = false;
+      this._readableState.endEmitted = false;
+    }
+
+    if (this._writableState) {
+      this._writableState.destroyed = false;
+      this._writableState.ended = false;
+      this._writableState.ending = false;
+      this._writableState.finalCalled = false;
+      this._writableState.prefinished = false;
+      this._writableState.finished = false;
+      this._writableState.errorEmitted = false;
+    }
+  }
+
+  function emitErrorNT(self, err) {
+    self.emit('error', err);
+  }
+
+  function errorOrDestroy(stream, err) {
+    // We have tests that rely on errors being emitted
+    // in the same tick, so changing this is semver major.
+    // For now when you opt-in to autoDestroy we allow
+    // the error to be emitted nextTick. In a future
+    // semver major update we should change the default to this.
+    var rState = stream._readableState;
+    var wState = stream._writableState;
+    if (rState && rState.autoDestroy || wState && wState.autoDestroy) stream.destroy(err);else stream.emit('error', err);
+  }
+
+  var destroy_1 = {
+    destroy: destroy,
+    undestroy: undestroy,
+    errorOrDestroy: errorOrDestroy
   };
 
-  BufferList.prototype.unshift = function (v) {
-    var entry = {
-      data: v,
-      next: this.head
-    };
-    if (this.length === 0) this.tail = entry;
-    this.head = entry;
-    ++this.length;
+  function _inheritsLoose(subClass, superClass) {
+    subClass.prototype = Object.create(superClass.prototype);
+    subClass.prototype.constructor = subClass;
+    subClass.__proto__ = superClass;
+  }
+
+  var codes = {};
+
+  function createErrorType(code, message, Base) {
+    if (!Base) {
+      Base = Error;
+    }
+
+    function getMessage(arg1, arg2, arg3) {
+      if (typeof message === 'string') {
+        return message;
+      } else {
+        return message(arg1, arg2, arg3);
+      }
+    }
+
+    var NodeError = /*#__PURE__*/function (_Base) {
+      _inheritsLoose(NodeError, _Base);
+
+      function NodeError(arg1, arg2, arg3) {
+        return _Base.call(this, getMessage(arg1, arg2, arg3)) || this;
+      }
+
+      return NodeError;
+    }(Base);
+
+    NodeError.prototype.name = Base.name;
+    NodeError.prototype.code = code;
+    codes[code] = NodeError;
+  } // https://github.com/nodejs/node/blob/v10.8.0/lib/internal/errors.js
+
+
+  function oneOf(expected, thing) {
+    if (Array.isArray(expected)) {
+      var len = expected.length;
+      expected = expected.map(function (i) {
+        return String(i);
+      });
+
+      if (len > 2) {
+        return "one of ".concat(thing, " ").concat(expected.slice(0, len - 1).join(', '), ", or ") + expected[len - 1];
+      } else if (len === 2) {
+        return "one of ".concat(thing, " ").concat(expected[0], " or ").concat(expected[1]);
+      } else {
+        return "of ".concat(thing, " ").concat(expected[0]);
+      }
+    } else {
+      return "of ".concat(thing, " ").concat(String(expected));
+    }
+  } // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/startsWith
+
+
+  function startsWith(str, search, pos) {
+    return str.substr(!pos || pos < 0 ? 0 : +pos, search.length) === search;
+  } // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/endsWith
+
+
+  function endsWith(str, search, this_len) {
+    if (this_len === undefined || this_len > str.length) {
+      this_len = str.length;
+    }
+
+    return str.substring(this_len - search.length, this_len) === search;
+  } // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/includes
+
+
+  function includes(str, search, start) {
+    if (typeof start !== 'number') {
+      start = 0;
+    }
+
+    if (start + search.length > str.length) {
+      return false;
+    } else {
+      return str.indexOf(search, start) !== -1;
+    }
+  }
+
+  createErrorType('ERR_INVALID_OPT_VALUE', function (name, value) {
+    return 'The value "' + value + '" is invalid for option "' + name + '"';
+  }, TypeError);
+  createErrorType('ERR_INVALID_ARG_TYPE', function (name, expected, actual) {
+    // determiner: 'must be' or 'must not be'
+    var determiner;
+
+    if (typeof expected === 'string' && startsWith(expected, 'not ')) {
+      determiner = 'must not be';
+      expected = expected.replace(/^not /, '');
+    } else {
+      determiner = 'must be';
+    }
+
+    var msg;
+
+    if (endsWith(name, ' argument')) {
+      // For cases like 'first argument'
+      msg = "The ".concat(name, " ").concat(determiner, " ").concat(oneOf(expected, 'type'));
+    } else {
+      var type = includes(name, '.') ? 'property' : 'argument';
+      msg = "The \"".concat(name, "\" ").concat(type, " ").concat(determiner, " ").concat(oneOf(expected, 'type'));
+    }
+
+    msg += ". Received type ".concat(_typeof(actual));
+    return msg;
+  }, TypeError);
+  createErrorType('ERR_STREAM_PUSH_AFTER_EOF', 'stream.push() after EOF');
+  createErrorType('ERR_METHOD_NOT_IMPLEMENTED', function (name) {
+    return 'The ' + name + ' method is not implemented';
+  });
+  createErrorType('ERR_STREAM_PREMATURE_CLOSE', 'Premature close');
+  createErrorType('ERR_STREAM_DESTROYED', function (name) {
+    return 'Cannot call ' + name + ' after a stream was destroyed';
+  });
+  createErrorType('ERR_MULTIPLE_CALLBACK', 'Callback called multiple times');
+  createErrorType('ERR_STREAM_CANNOT_PIPE', 'Cannot pipe, not readable');
+  createErrorType('ERR_STREAM_WRITE_AFTER_END', 'write after end');
+  createErrorType('ERR_STREAM_NULL_VALUES', 'May not write null values to stream', TypeError);
+  createErrorType('ERR_UNKNOWN_ENCODING', function (arg) {
+    return 'Unknown encoding: ' + arg;
+  }, TypeError);
+  createErrorType('ERR_STREAM_UNSHIFT_AFTER_END_EVENT', 'stream.unshift() after end event');
+  var codes_1 = codes;
+  var errorsBrowser = {
+    codes: codes_1
   };
 
-  BufferList.prototype.shift = function () {
-    if (this.length === 0) return;
-    var ret = this.head.data;
-    if (this.length === 1) this.head = this.tail = null;else this.head = this.head.next;
-    --this.length;
+  var ERR_INVALID_OPT_VALUE = errorsBrowser.codes.ERR_INVALID_OPT_VALUE;
+
+  function highWaterMarkFrom(options, isDuplex, duplexKey) {
+    return options.highWaterMark != null ? options.highWaterMark : isDuplex ? options[duplexKey] : null;
+  }
+
+  function getHighWaterMark(state, options, duplexKey, isDuplex) {
+    var hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
+
+    if (hwm != null) {
+      if (!(isFinite(hwm) && Math.floor(hwm) === hwm) || hwm < 0) {
+        var name = isDuplex ? duplexKey : 'highWaterMark';
+        throw new ERR_INVALID_OPT_VALUE(name, hwm);
+      }
+
+      return Math.floor(hwm);
+    } // Default value
+
+
+    return state.objectMode ? 16 : 16 * 1024;
+  }
+
+  var state = {
+    getHighWaterMark: getHighWaterMark
+  };
+
+  /**
+   * Module exports.
+   */
+
+  var browser$1 = deprecate$1;
+  /**
+   * Mark that a method should not be used.
+   * Returns a modified function which warns once by default.
+   *
+   * If `localStorage.noDeprecation = true` is set, then it is a no-op.
+   *
+   * If `localStorage.throwDeprecation = true` is set, then deprecated functions
+   * will throw an Error when invoked.
+   *
+   * If `localStorage.traceDeprecation = true` is set, then deprecated functions
+   * will invoke `console.trace()` instead of `console.error()`.
+   *
+   * @param {Function} fn - the function to deprecate
+   * @param {String} msg - the string to print to the console when `fn` is invoked
+   * @returns {Function} a new "deprecated" version of `fn`
+   * @api public
+   */
+
+  function deprecate$1(fn, msg) {
+    if (config$1('noDeprecation')) {
+      return fn;
+    }
+
+    var warned = false;
+
+    function deprecated() {
+      if (!warned) {
+        if (config$1('throwDeprecation')) {
+          throw new Error(msg);
+        } else if (config$1('traceDeprecation')) {
+          console.trace(msg);
+        } else {
+          console.warn(msg);
+        }
+
+        warned = true;
+      }
+
+      return fn.apply(this, arguments);
+    }
+
+    return deprecated;
+  }
+  /**
+   * Checks `localStorage` for boolean values for the given `name`.
+   *
+   * @param {String} name
+   * @returns {Boolean}
+   * @api private
+   */
+
+
+  function config$1(name) {
+    // accessing global.localStorage can trigger a DOMException in sandboxed iframes
+    try {
+      if (!commonjsGlobal.localStorage) return false;
+    } catch (_) {
+      return false;
+    }
+
+    var val = commonjsGlobal.localStorage[name];
+    if (null == val) return false;
+    return String(val).toLowerCase() === 'true';
+  }
+
+  var _stream_writable = Writable;
+  // there will be only 2 of these for each stream
+
+
+  function CorkedRequest(state) {
+    var _this = this;
+
+    this.next = null;
+    this.entry = null;
+
+    this.finish = function () {
+      onCorkedFinish(_this, state);
+    };
+  }
+  /* </replacement> */
+
+  /*<replacement>*/
+
+
+  var Duplex;
+  /*</replacement>*/
+
+  Writable.WritableState = WritableState;
+  /*<replacement>*/
+
+  var internalUtil = {
+    deprecate: browser$1
+  };
+  /*</replacement>*/
+
+  /*<replacement>*/
+
+  /*</replacement>*/
+
+  var Buffer$3 = bufferEs6.Buffer;
+
+  var OurUint8Array = commonjsGlobal.Uint8Array || function () {};
+
+  function _uint8ArrayToBuffer(chunk) {
+    return Buffer$3.from(chunk);
+  }
+
+  function _isUint8Array(obj) {
+    return Buffer$3.isBuffer(obj) || obj instanceof OurUint8Array;
+  }
+
+  var getHighWaterMark$1 = state.getHighWaterMark;
+  var _require$codes = errorsBrowser.codes,
+      ERR_INVALID_ARG_TYPE = _require$codes.ERR_INVALID_ARG_TYPE,
+      ERR_METHOD_NOT_IMPLEMENTED = _require$codes.ERR_METHOD_NOT_IMPLEMENTED,
+      ERR_MULTIPLE_CALLBACK = _require$codes.ERR_MULTIPLE_CALLBACK,
+      ERR_STREAM_CANNOT_PIPE = _require$codes.ERR_STREAM_CANNOT_PIPE,
+      ERR_STREAM_DESTROYED = _require$codes.ERR_STREAM_DESTROYED,
+      ERR_STREAM_NULL_VALUES = _require$codes.ERR_STREAM_NULL_VALUES,
+      ERR_STREAM_WRITE_AFTER_END = _require$codes.ERR_STREAM_WRITE_AFTER_END,
+      ERR_UNKNOWN_ENCODING = _require$codes.ERR_UNKNOWN_ENCODING;
+  var errorOrDestroy$1 = destroy_1.errorOrDestroy;
+  inherits_browser(Writable, streamBrowser);
+
+  function nop() {}
+
+  function WritableState(options, stream, isDuplex) {
+    Duplex = Duplex || _stream_duplex;
+    options = options || {}; // Duplex streams are both readable and writable, but share
+    // the same options object.
+    // However, some cases require setting options to different
+    // values for the readable and the writable sides of the duplex stream,
+    // e.g. options.readableObjectMode vs. options.writableObjectMode, etc.
+
+    if (typeof isDuplex !== 'boolean') isDuplex = stream instanceof Duplex; // object stream flag to indicate whether or not this stream
+    // contains buffers or objects.
+
+    this.objectMode = !!options.objectMode;
+    if (isDuplex) this.objectMode = this.objectMode || !!options.writableObjectMode; // the point at which write() starts returning false
+    // Note: 0 is a valid value, means that we always return false if
+    // the entire buffer is not flushed immediately on write()
+
+    this.highWaterMark = getHighWaterMark$1(this, options, 'writableHighWaterMark', isDuplex); // if _final has been called
+
+    this.finalCalled = false; // drain event flag.
+
+    this.needDrain = false; // at the start of calling end()
+
+    this.ending = false; // when end() has been called, and returned
+
+    this.ended = false; // when 'finish' is emitted
+
+    this.finished = false; // has it been destroyed
+
+    this.destroyed = false; // should we decode strings into buffers before passing to _write?
+    // this is here so that some node-core streams can optimize string
+    // handling at a lower level.
+
+    var noDecode = options.decodeStrings === false;
+    this.decodeStrings = !noDecode; // Crypto is kind of old and crusty.  Historically, its default string
+    // encoding is 'binary' so we have to make this configurable.
+    // Everything else in the universe uses 'utf8', though.
+
+    this.defaultEncoding = options.defaultEncoding || 'utf8'; // not an actual buffer we keep track of, but a measurement
+    // of how much we're waiting to get pushed to some underlying
+    // socket or file.
+
+    this.length = 0; // a flag to see when we're in the middle of a write.
+
+    this.writing = false; // when true all writes will be buffered until .uncork() call
+
+    this.corked = 0; // a flag to be able to tell if the onwrite cb is called immediately,
+    // or on a later tick.  We set this to true at first, because any
+    // actions that shouldn't happen until "later" should generally also
+    // not happen before the first write call.
+
+    this.sync = true; // a flag to know if we're processing previously buffered items, which
+    // may call the _write() callback in the same tick, so that we don't
+    // end up in an overlapped onwrite situation.
+
+    this.bufferProcessing = false; // the callback that's passed to _write(chunk,cb)
+
+    this.onwrite = function (er) {
+      onwrite(stream, er);
+    }; // the callback that the user supplies to write(chunk,encoding,cb)
+
+
+    this.writecb = null; // the amount that is being written when _write is called.
+
+    this.writelen = 0;
+    this.bufferedRequest = null;
+    this.lastBufferedRequest = null; // number of pending user-supplied write callbacks
+    // this must be 0 before 'finish' can be emitted
+
+    this.pendingcb = 0; // emit prefinish if the only thing we're waiting for is _write cbs
+    // This is relevant for synchronous Transform streams
+
+    this.prefinished = false; // True if the error was already emitted and should not be thrown again
+
+    this.errorEmitted = false; // Should close be emitted on destroy. Defaults to true.
+
+    this.emitClose = options.emitClose !== false; // Should .destroy() be called after 'finish' (and potentially 'end')
+
+    this.autoDestroy = !!options.autoDestroy; // count buffered requests
+
+    this.bufferedRequestCount = 0; // allocate the first CorkedRequest, there is always
+    // one allocated and free to use, and we maintain at most two
+
+    this.corkedRequestsFree = new CorkedRequest(this);
+  }
+
+  WritableState.prototype.getBuffer = function getBuffer() {
+    var current = this.bufferedRequest;
+    var out = [];
+
+    while (current) {
+      out.push(current);
+      current = current.next;
+    }
+
+    return out;
+  };
+
+  (function () {
+    try {
+      Object.defineProperty(WritableState.prototype, 'buffer', {
+        get: internalUtil.deprecate(function writableStateBufferGetter() {
+          return this.getBuffer();
+        }, '_writableState.buffer is deprecated. Use _writableState.getBuffer ' + 'instead.', 'DEP0003')
+      });
+    } catch (_) {}
+  })(); // Test _writableState for inheritance to account for Duplex streams,
+  // whose prototype chain only points to Readable.
+
+
+  var realHasInstance;
+
+  if (typeof Symbol === 'function' && Symbol.hasInstance && typeof Function.prototype[Symbol.hasInstance] === 'function') {
+    realHasInstance = Function.prototype[Symbol.hasInstance];
+    Object.defineProperty(Writable, Symbol.hasInstance, {
+      value: function value(object) {
+        if (realHasInstance.call(this, object)) return true;
+        if (this !== Writable) return false;
+        return object && object._writableState instanceof WritableState;
+      }
+    });
+  } else {
+    realHasInstance = function realHasInstance(object) {
+      return object instanceof this;
+    };
+  }
+
+  function Writable(options) {
+    Duplex = Duplex || _stream_duplex; // Writable ctor is applied to Duplexes, too.
+    // `realHasInstance` is necessary because using plain `instanceof`
+    // would return false, as no `_writableState` property is attached.
+    // Trying to use the custom `instanceof` for Writable here will also break the
+    // Node.js LazyTransform implementation, which has a non-trivial getter for
+    // `_writableState` that would lead to infinite recursion.
+    // Checking for a Stream.Duplex instance is faster here instead of inside
+    // the WritableState constructor, at least with V8 6.5
+
+    var isDuplex = this instanceof Duplex;
+    if (!isDuplex && !realHasInstance.call(Writable, this)) return new Writable(options);
+    this._writableState = new WritableState(options, this, isDuplex); // legacy.
+
+    this.writable = true;
+
+    if (options) {
+      if (typeof options.write === 'function') this._write = options.write;
+      if (typeof options.writev === 'function') this._writev = options.writev;
+      if (typeof options.destroy === 'function') this._destroy = options.destroy;
+      if (typeof options["final"] === 'function') this._final = options["final"];
+    }
+
+    streamBrowser.call(this);
+  } // Otherwise people can pipe Writable streams, which is just wrong.
+
+
+  Writable.prototype.pipe = function () {
+    errorOrDestroy$1(this, new ERR_STREAM_CANNOT_PIPE());
+  };
+
+  function writeAfterEnd(stream, cb) {
+    var er = new ERR_STREAM_WRITE_AFTER_END(); // TODO: defer error events consistently everywhere, not just the cb
+
+    errorOrDestroy$1(stream, er);
+    nextTick(cb, er);
+  } // Checks that a user-supplied chunk is valid, especially for the particular
+  // mode the stream is in. Currently this means that `null` is never accepted
+  // and undefined/non-string values are only allowed in object mode.
+
+
+  function validChunk(stream, state, chunk, cb) {
+    var er;
+
+    if (chunk === null) {
+      er = new ERR_STREAM_NULL_VALUES();
+    } else if (typeof chunk !== 'string' && !state.objectMode) {
+      er = new ERR_INVALID_ARG_TYPE('chunk', ['string', 'Buffer'], chunk);
+    }
+
+    if (er) {
+      errorOrDestroy$1(stream, er);
+      nextTick(cb, er);
+      return false;
+    }
+
+    return true;
+  }
+
+  Writable.prototype.write = function (chunk, encoding, cb) {
+    var state = this._writableState;
+    var ret = false;
+
+    var isBuf = !state.objectMode && _isUint8Array(chunk);
+
+    if (isBuf && !Buffer$3.isBuffer(chunk)) {
+      chunk = _uint8ArrayToBuffer(chunk);
+    }
+
+    if (typeof encoding === 'function') {
+      cb = encoding;
+      encoding = null;
+    }
+
+    if (isBuf) encoding = 'buffer';else if (!encoding) encoding = state.defaultEncoding;
+    if (typeof cb !== 'function') cb = nop;
+    if (state.ending) writeAfterEnd(this, cb);else if (isBuf || validChunk(this, state, chunk, cb)) {
+      state.pendingcb++;
+      ret = writeOrBuffer(this, state, isBuf, chunk, encoding, cb);
+    }
     return ret;
   };
 
-  BufferList.prototype.clear = function () {
-    this.head = this.tail = null;
-    this.length = 0;
+  Writable.prototype.cork = function () {
+    this._writableState.corked++;
   };
 
-  BufferList.prototype.join = function (s) {
-    if (this.length === 0) return '';
-    var p = this.head;
-    var ret = '' + p.data;
+  Writable.prototype.uncork = function () {
+    var state = this._writableState;
 
-    while (p = p.next) {
-      ret += s + p.data;
+    if (state.corked) {
+      state.corked--;
+      if (!state.writing && !state.corked && !state.bufferProcessing && state.bufferedRequest) clearBuffer(this, state);
+    }
+  };
+
+  Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
+    // node::ParseEncoding() requires lower case.
+    if (typeof encoding === 'string') encoding = encoding.toLowerCase();
+    if (!(['hex', 'utf8', 'utf-8', 'ascii', 'binary', 'base64', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le', 'raw'].indexOf((encoding + '').toLowerCase()) > -1)) throw new ERR_UNKNOWN_ENCODING(encoding);
+    this._writableState.defaultEncoding = encoding;
+    return this;
+  };
+
+  Object.defineProperty(Writable.prototype, 'writableBuffer', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._writableState && this._writableState.getBuffer();
+    }
+  });
+
+  function decodeChunk(state, chunk, encoding) {
+    if (!state.objectMode && state.decodeStrings !== false && typeof chunk === 'string') {
+      chunk = Buffer$3.from(chunk, encoding);
+    }
+
+    return chunk;
+  }
+
+  Object.defineProperty(Writable.prototype, 'writableHighWaterMark', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._writableState.highWaterMark;
+    }
+  }); // if we're already writing something, then just put this
+  // in the queue, and wait our turn.  Otherwise, call _write
+  // If we return false, then we need a drain event, so set that flag.
+
+  function writeOrBuffer(stream, state, isBuf, chunk, encoding, cb) {
+    if (!isBuf) {
+      var newChunk = decodeChunk(state, chunk, encoding);
+
+      if (chunk !== newChunk) {
+        isBuf = true;
+        encoding = 'buffer';
+        chunk = newChunk;
+      }
+    }
+
+    var len = state.objectMode ? 1 : chunk.length;
+    state.length += len;
+    var ret = state.length < state.highWaterMark; // we must ensure that previous needDrain will not be reset to false.
+
+    if (!ret) state.needDrain = true;
+
+    if (state.writing || state.corked) {
+      var last = state.lastBufferedRequest;
+      state.lastBufferedRequest = {
+        chunk: chunk,
+        encoding: encoding,
+        isBuf: isBuf,
+        callback: cb,
+        next: null
+      };
+
+      if (last) {
+        last.next = state.lastBufferedRequest;
+      } else {
+        state.bufferedRequest = state.lastBufferedRequest;
+      }
+
+      state.bufferedRequestCount += 1;
+    } else {
+      doWrite(stream, state, false, len, chunk, encoding, cb);
     }
 
     return ret;
-  };
+  }
 
-  BufferList.prototype.concat = function (n) {
-    if (this.length === 0) return Buffer$1.alloc(0);
-    if (this.length === 1) return this.head.data;
-    var ret = Buffer$1.allocUnsafe(n >>> 0);
-    var p = this.head;
-    var i = 0;
+  function doWrite(stream, state, writev, len, chunk, encoding, cb) {
+    state.writelen = len;
+    state.writecb = cb;
+    state.writing = true;
+    state.sync = true;
+    if (state.destroyed) state.onwrite(new ERR_STREAM_DESTROYED('write'));else if (writev) stream._writev(chunk, state.onwrite);else stream._write(chunk, encoding, state.onwrite);
+    state.sync = false;
+  }
 
-    while (p) {
-      p.data.copy(ret, i);
-      i += p.data.length;
-      p = p.next;
+  function onwriteError(stream, state, sync, er, cb) {
+    --state.pendingcb;
+
+    if (sync) {
+      // defer the callback if we are being called synchronously
+      // to avoid piling up things on the stack
+      nextTick(cb, er); // this can emit finish, and it will always happen
+      // after error
+
+      nextTick(finishMaybe, stream, state);
+      stream._writableState.errorEmitted = true;
+      errorOrDestroy$1(stream, er);
+    } else {
+      // the caller expect this to happen before if
+      // it is async
+      cb(er);
+      stream._writableState.errorEmitted = true;
+      errorOrDestroy$1(stream, er); // this can emit finish, but finish must
+      // always follow error
+
+      finishMaybe(stream, state);
+    }
+  }
+
+  function onwriteStateUpdate(state) {
+    state.writing = false;
+    state.writecb = null;
+    state.length -= state.writelen;
+    state.writelen = 0;
+  }
+
+  function onwrite(stream, er) {
+    var state = stream._writableState;
+    var sync = state.sync;
+    var cb = state.writecb;
+    if (typeof cb !== 'function') throw new ERR_MULTIPLE_CALLBACK();
+    onwriteStateUpdate(state);
+    if (er) onwriteError(stream, state, sync, er, cb);else {
+      // Check if we're actually ready to finish, but don't emit yet
+      var finished = needFinish(state) || stream.destroyed;
+
+      if (!finished && !state.corked && !state.bufferProcessing && state.bufferedRequest) {
+        clearBuffer(stream, state);
+      }
+
+      if (sync) {
+        nextTick(afterWrite, stream, state, finished, cb);
+      } else {
+        afterWrite(stream, state, finished, cb);
+      }
+    }
+  }
+
+  function afterWrite(stream, state, finished, cb) {
+    if (!finished) onwriteDrain(stream, state);
+    state.pendingcb--;
+    cb();
+    finishMaybe(stream, state);
+  } // Must force callback to be called on nextTick, so that we don't
+  // emit 'drain' before the write() consumer gets the 'false' return
+  // value, and has a chance to attach a 'drain' listener.
+
+
+  function onwriteDrain(stream, state) {
+    if (state.length === 0 && state.needDrain) {
+      state.needDrain = false;
+      stream.emit('drain');
+    }
+  } // if there's something in the buffer waiting, then process it
+
+
+  function clearBuffer(stream, state) {
+    state.bufferProcessing = true;
+    var entry = state.bufferedRequest;
+
+    if (stream._writev && entry && entry.next) {
+      // Fast case, write everything using _writev()
+      var l = state.bufferedRequestCount;
+      var buffer = new Array(l);
+      var holder = state.corkedRequestsFree;
+      holder.entry = entry;
+      var count = 0;
+      var allBuffers = true;
+
+      while (entry) {
+        buffer[count] = entry;
+        if (!entry.isBuf) allBuffers = false;
+        entry = entry.next;
+        count += 1;
+      }
+
+      buffer.allBuffers = allBuffers;
+      doWrite(stream, state, true, state.length, buffer, '', holder.finish); // doWrite is almost always async, defer these to save a bit of time
+      // as the hot path ends with doWrite
+
+      state.pendingcb++;
+      state.lastBufferedRequest = null;
+
+      if (holder.next) {
+        state.corkedRequestsFree = holder.next;
+        holder.next = null;
+      } else {
+        state.corkedRequestsFree = new CorkedRequest(state);
+      }
+
+      state.bufferedRequestCount = 0;
+    } else {
+      // Slow case, write chunks one-by-one
+      while (entry) {
+        var chunk = entry.chunk;
+        var encoding = entry.encoding;
+        var cb = entry.callback;
+        var len = state.objectMode ? 1 : chunk.length;
+        doWrite(stream, state, false, len, chunk, encoding, cb);
+        entry = entry.next;
+        state.bufferedRequestCount--; // if we didn't call the onwrite immediately, then
+        // it means that we need to wait until it does.
+        // also, that means that the chunk and cb are currently
+        // being processed, so move the buffer counter past them.
+
+        if (state.writing) {
+          break;
+        }
+      }
+
+      if (entry === null) state.lastBufferedRequest = null;
     }
 
-    return ret;
+    state.bufferedRequest = entry;
+    state.bufferProcessing = false;
+  }
+
+  Writable.prototype._write = function (chunk, encoding, cb) {
+    cb(new ERR_METHOD_NOT_IMPLEMENTED('_write()'));
   };
 
-  // Copyright Joyent, Inc. and other Node contributors.
+  Writable.prototype._writev = null;
 
-  var isBufferEncoding = Buffer$1.isEncoding || function (encoding) {
+  Writable.prototype.end = function (chunk, encoding, cb) {
+    var state = this._writableState;
+
+    if (typeof chunk === 'function') {
+      cb = chunk;
+      chunk = null;
+      encoding = null;
+    } else if (typeof encoding === 'function') {
+      cb = encoding;
+      encoding = null;
+    }
+
+    if (chunk !== null && chunk !== undefined) this.write(chunk, encoding); // .end() fully uncorks
+
+    if (state.corked) {
+      state.corked = 1;
+      this.uncork();
+    } // ignore unnecessary end() calls.
+
+
+    if (!state.ending) endWritable(this, state, cb);
+    return this;
+  };
+
+  Object.defineProperty(Writable.prototype, 'writableLength', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._writableState.length;
+    }
+  });
+
+  function needFinish(state) {
+    return state.ending && state.length === 0 && state.bufferedRequest === null && !state.finished && !state.writing;
+  }
+
+  function callFinal(stream, state) {
+    stream._final(function (err) {
+      state.pendingcb--;
+
+      if (err) {
+        errorOrDestroy$1(stream, err);
+      }
+
+      state.prefinished = true;
+      stream.emit('prefinish');
+      finishMaybe(stream, state);
+    });
+  }
+
+  function prefinish(stream, state) {
+    if (!state.prefinished && !state.finalCalled) {
+      if (typeof stream._final === 'function' && !state.destroyed) {
+        state.pendingcb++;
+        state.finalCalled = true;
+        nextTick(callFinal, stream, state);
+      } else {
+        state.prefinished = true;
+        stream.emit('prefinish');
+      }
+    }
+  }
+
+  function finishMaybe(stream, state) {
+    var need = needFinish(state);
+
+    if (need) {
+      prefinish(stream, state);
+
+      if (state.pendingcb === 0) {
+        state.finished = true;
+        stream.emit('finish');
+
+        if (state.autoDestroy) {
+          // In case of duplex streams we need a way to detect
+          // if the readable side is ready for autoDestroy as well
+          var rState = stream._readableState;
+
+          if (!rState || rState.autoDestroy && rState.endEmitted) {
+            stream.destroy();
+          }
+        }
+      }
+    }
+
+    return need;
+  }
+
+  function endWritable(stream, state, cb) {
+    state.ending = true;
+    finishMaybe(stream, state);
+
+    if (cb) {
+      if (state.finished) nextTick(cb);else stream.once('finish', cb);
+    }
+
+    state.ended = true;
+    stream.writable = false;
+  }
+
+  function onCorkedFinish(corkReq, state, err) {
+    var entry = corkReq.entry;
+    corkReq.entry = null;
+
+    while (entry) {
+      var cb = entry.callback;
+      state.pendingcb--;
+      cb(err);
+      entry = entry.next;
+    } // reuse the free corkReq.
+
+
+    state.corkedRequestsFree.next = corkReq;
+  }
+
+  Object.defineProperty(Writable.prototype, 'destroyed', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      if (this._writableState === undefined) {
+        return false;
+      }
+
+      return this._writableState.destroyed;
+    },
+    set: function set(value) {
+      // we ignore the value if the stream
+      // has not been initialized yet
+      if (!this._writableState) {
+        return;
+      } // backward compatibility, the user is explicitly
+      // managing destroyed
+
+
+      this._writableState.destroyed = value;
+    }
+  });
+  Writable.prototype.destroy = destroy_1.destroy;
+  Writable.prototype._undestroy = destroy_1.undestroy;
+
+  Writable.prototype._destroy = function (err, cb) {
+    cb(err);
+  };
+
+  /*<replacement>*/
+
+
+  var objectKeys = Object.keys || function (obj) {
+    var keys = [];
+
+    for (var key in obj) {
+      keys.push(key);
+    }
+
+    return keys;
+  };
+  /*</replacement>*/
+
+
+  var _stream_duplex = Duplex$1;
+  inherits_browser(Duplex$1, _stream_readable);
+  {
+    // Allow the keys array to be GC'ed.
+    var keys = objectKeys(_stream_writable.prototype);
+
+    for (var v = 0; v < keys.length; v++) {
+      var method = keys[v];
+      if (!Duplex$1.prototype[method]) Duplex$1.prototype[method] = _stream_writable.prototype[method];
+    }
+  }
+
+  function Duplex$1(options) {
+    if (!(this instanceof Duplex$1)) return new Duplex$1(options);
+    _stream_readable.call(this, options);
+    _stream_writable.call(this, options);
+    this.allowHalfOpen = true;
+
+    if (options) {
+      if (options.readable === false) this.readable = false;
+      if (options.writable === false) this.writable = false;
+
+      if (options.allowHalfOpen === false) {
+        this.allowHalfOpen = false;
+        this.once('end', onend);
+      }
+    }
+  }
+
+  Object.defineProperty(Duplex$1.prototype, 'writableHighWaterMark', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._writableState.highWaterMark;
+    }
+  });
+  Object.defineProperty(Duplex$1.prototype, 'writableBuffer', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._writableState && this._writableState.getBuffer();
+    }
+  });
+  Object.defineProperty(Duplex$1.prototype, 'writableLength', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._writableState.length;
+    }
+  }); // the no-half-open enforcer
+
+  function onend() {
+    // If the writable side ended, then we're ok.
+    if (this._writableState.ended) return; // no more data can be written.
+    // But allow more writes to happen in this tick.
+
+    nextTick(onEndNT, this);
+  }
+
+  function onEndNT(self) {
+    self.end();
+  }
+
+  Object.defineProperty(Duplex$1.prototype, 'destroyed', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      if (this._readableState === undefined || this._writableState === undefined) {
+        return false;
+      }
+
+      return this._readableState.destroyed && this._writableState.destroyed;
+    },
+    set: function set(value) {
+      // we ignore the value if the stream
+      // has not been initialized yet
+      if (this._readableState === undefined || this._writableState === undefined) {
+        return;
+      } // backward compatibility, the user is explicitly
+      // managing destroyed
+
+
+      this._readableState.destroyed = value;
+      this._writableState.destroyed = value;
+    }
+  });
+
+  /*<replacement>*/
+
+
+  var Buffer$4 = safeBuffer.Buffer;
+  /*</replacement>*/
+
+  var isEncoding = Buffer$4.isEncoding || function (encoding) {
+    encoding = '' + encoding;
+
     switch (encoding && encoding.toLowerCase()) {
       case 'hex':
       case 'utf8':
@@ -38810,245 +42241,720 @@ document.getElementById("create-token").onclick = create_token_click;
     }
   };
 
-  function assertEncoding(encoding) {
-    if (encoding && !isBufferEncoding(encoding)) {
-      throw new Error('Unknown encoding: ' + encoding);
+  function _normalizeEncoding(enc) {
+    if (!enc) return 'utf8';
+    var retried;
+
+    while (true) {
+      switch (enc) {
+        case 'utf8':
+        case 'utf-8':
+          return 'utf8';
+
+        case 'ucs2':
+        case 'ucs-2':
+        case 'utf16le':
+        case 'utf-16le':
+          return 'utf16le';
+
+        case 'latin1':
+        case 'binary':
+          return 'latin1';
+
+        case 'base64':
+        case 'ascii':
+        case 'hex':
+          return enc;
+
+        default:
+          if (retried) return; // undefined
+
+          enc = ('' + enc).toLowerCase();
+          retried = true;
+      }
     }
+  }
+  // modules monkey-patch it to support additional encodings
+
+  function normalizeEncoding(enc) {
+    var nenc = _normalizeEncoding(enc);
+
+    if (typeof nenc !== 'string' && (Buffer$4.isEncoding === isEncoding || !isEncoding(enc))) throw new Error('Unknown encoding: ' + enc);
+    return nenc || enc;
   } // StringDecoder provides an interface for efficiently splitting a series of
   // buffers into a series of JS strings without breaking apart multi-byte
-  // characters. CESU-8 is handled as part of the UTF-8 encoding.
-  //
-  // @TODO Handling all encodings inside a single object makes it very difficult
-  // to reason about this code, so it should be split up in the future.
-  // @TODO There should be a utf8-strict encoding that rejects invalid UTF-8 code
-  // points as used by CESU-8.
+  // characters.
 
+
+  var StringDecoder_1 = StringDecoder;
 
   function StringDecoder(encoding) {
-    this.encoding = (encoding || 'utf8').toLowerCase().replace(/[-_]/, '');
-    assertEncoding(encoding);
+    this.encoding = normalizeEncoding(encoding);
+    var nb;
 
     switch (this.encoding) {
-      case 'utf8':
-        // CESU-8 represents each of Surrogate Pair by 3-bytes
-        this.surrogateSize = 3;
+      case 'utf16le':
+        this.text = utf16Text;
+        this.end = utf16End;
+        nb = 4;
         break;
 
-      case 'ucs2':
-      case 'utf16le':
-        // UTF-16 represents each of Surrogate Pair by 2-bytes
-        this.surrogateSize = 2;
-        this.detectIncompleteChar = utf16DetectIncompleteChar;
+      case 'utf8':
+        this.fillLast = utf8FillLast;
+        nb = 4;
         break;
 
       case 'base64':
-        // Base-64 stores 3 bytes in 4 chars, and pads the remainder.
-        this.surrogateSize = 3;
-        this.detectIncompleteChar = base64DetectIncompleteChar;
+        this.text = base64Text;
+        this.end = base64End;
+        nb = 3;
         break;
 
       default:
-        this.write = passThroughWrite;
+        this.write = simpleWrite;
+        this.end = simpleEnd;
         return;
-    } // Enough space to store all bytes of a single character. UTF-8 needs 4
-    // bytes, but CESU-8 may require up to 6 (3 bytes per surrogate).
+    }
 
-
-    this.charBuffer = new Buffer$1(6); // Number of bytes received for the current incomplete multi-byte character.
-
-    this.charReceived = 0; // Number of bytes expected for the current incomplete multi-byte character.
-
-    this.charLength = 0;
+    this.lastNeed = 0;
+    this.lastTotal = 0;
+    this.lastChar = Buffer$4.allocUnsafe(nb);
   }
-  // guaranteed to not contain any partial multi-byte characters. Any partial
-  // character found at the end of the buffer is buffered up, and will be
-  // returned when calling write again with the remaining bytes.
-  //
-  // Note: Converting a Buffer containing an orphan surrogate to a String
-  // currently works, but converting a String to a Buffer (via `new Buffer`, or
-  // Buffer#write) will replace incomplete surrogates with the unicode
-  // replacement character. See https://codereview.chromium.org/121173009/ .
 
-  StringDecoder.prototype.write = function (buffer) {
-    var charStr = ''; // if our last write ended with an incomplete multibyte character
+  StringDecoder.prototype.write = function (buf) {
+    if (buf.length === 0) return '';
+    var r;
+    var i;
 
-    while (this.charLength) {
-      // determine how many remaining bytes this buffer has to offer for this char
-      var available = buffer.length >= this.charLength - this.charReceived ? this.charLength - this.charReceived : buffer.length; // add the new bytes to the char buffer
-
-      buffer.copy(this.charBuffer, this.charReceived, 0, available);
-      this.charReceived += available;
-
-      if (this.charReceived < this.charLength) {
-        // still not enough chars in this buffer? wait for more ...
-        return '';
-      } // remove bytes belonging to the current character from the buffer
-
-
-      buffer = buffer.slice(available, buffer.length); // get the character that was split
-
-      charStr = this.charBuffer.slice(0, this.charLength).toString(this.encoding); // CESU-8: lead surrogate (D800-DBFF) is also the incomplete character
-
-      var charCode = charStr.charCodeAt(charStr.length - 1);
-
-      if (charCode >= 0xD800 && charCode <= 0xDBFF) {
-        this.charLength += this.surrogateSize;
-        charStr = '';
-        continue;
-      }
-
-      this.charReceived = this.charLength = 0; // if there are no more bytes in this buffer, just emit our char
-
-      if (buffer.length === 0) {
-        return charStr;
-      }
-
-      break;
-    } // determine and set charLength / charReceived
-
-
-    this.detectIncompleteChar(buffer);
-    var end = buffer.length;
-
-    if (this.charLength) {
-      // buffer the incomplete character bytes we got
-      buffer.copy(this.charBuffer, 0, buffer.length - this.charReceived, end);
-      end -= this.charReceived;
+    if (this.lastNeed) {
+      r = this.fillLast(buf);
+      if (r === undefined) return '';
+      i = this.lastNeed;
+      this.lastNeed = 0;
+    } else {
+      i = 0;
     }
 
-    charStr += buffer.toString(this.encoding, 0, end);
-    var end = charStr.length - 1;
-    var charCode = charStr.charCodeAt(end); // CESU-8: lead surrogate (D800-DBFF) is also the incomplete character
-
-    if (charCode >= 0xD800 && charCode <= 0xDBFF) {
-      var size = this.surrogateSize;
-      this.charLength += size;
-      this.charReceived += size;
-      this.charBuffer.copy(this.charBuffer, size, 0, size);
-      buffer.copy(this.charBuffer, 0, 0, size);
-      return charStr.substring(0, end);
-    } // or just emit the charStr
-
-
-    return charStr;
-  }; // detectIncompleteChar determines if there is an incomplete UTF-8 character at
-  // the end of the given buffer. If so, it sets this.charLength to the byte
-  // length that character, and sets this.charReceived to the number of bytes
-  // that are available for this character.
-
-
-  StringDecoder.prototype.detectIncompleteChar = function (buffer) {
-    // determine how many bytes we have to check at the end of this buffer
-    var i = buffer.length >= 3 ? 3 : buffer.length; // Figure out if one of the last i bytes of our buffer announces an
-    // incomplete char.
-
-    for (; i > 0; i--) {
-      var c = buffer[buffer.length - i]; // See http://en.wikipedia.org/wiki/UTF-8#Description
-      // 110XXXXX
-
-      if (i == 1 && c >> 5 == 0x06) {
-        this.charLength = 2;
-        break;
-      } // 1110XXXX
-
-
-      if (i <= 2 && c >> 4 == 0x0E) {
-        this.charLength = 3;
-        break;
-      } // 11110XXX
-
-
-      if (i <= 3 && c >> 3 == 0x1E) {
-        this.charLength = 4;
-        break;
-      }
-    }
-
-    this.charReceived = i;
+    if (i < buf.length) return r ? r + this.text(buf, i) : this.text(buf, i);
+    return r || '';
   };
 
-  StringDecoder.prototype.end = function (buffer) {
-    var res = '';
-    if (buffer && buffer.length) res = this.write(buffer);
+  StringDecoder.prototype.end = utf8End; // Returns only complete characters in a Buffer
 
-    if (this.charReceived) {
-      var cr = this.charReceived;
-      var buf = this.charBuffer;
-      var enc = this.encoding;
-      res += buf.slice(0, cr).toString(enc);
+  StringDecoder.prototype.text = utf8Text; // Attempts to complete a partial non-UTF-8 character using bytes from a Buffer
+
+  StringDecoder.prototype.fillLast = function (buf) {
+    if (this.lastNeed <= buf.length) {
+      buf.copy(this.lastChar, this.lastTotal - this.lastNeed, 0, this.lastNeed);
+      return this.lastChar.toString(this.encoding, 0, this.lastTotal);
     }
 
-    return res;
+    buf.copy(this.lastChar, this.lastTotal - this.lastNeed, 0, buf.length);
+    this.lastNeed -= buf.length;
+  }; // Checks the type of a UTF-8 byte, whether it's ASCII, a leading byte, or a
+  // continuation byte. If an invalid byte is detected, -2 is returned.
+
+
+  function utf8CheckByte(_byte) {
+    if (_byte <= 0x7F) return 0;else if (_byte >> 5 === 0x06) return 2;else if (_byte >> 4 === 0x0E) return 3;else if (_byte >> 3 === 0x1E) return 4;
+    return _byte >> 6 === 0x02 ? -1 : -2;
+  } // Checks at most 3 bytes at the end of a Buffer in order to detect an
+  // incomplete multi-byte UTF-8 character. The total number of bytes (2, 3, or 4)
+  // needed to complete the UTF-8 character (if applicable) are returned.
+
+
+  function utf8CheckIncomplete(self, buf, i) {
+    var j = buf.length - 1;
+    if (j < i) return 0;
+    var nb = utf8CheckByte(buf[j]);
+
+    if (nb >= 0) {
+      if (nb > 0) self.lastNeed = nb - 1;
+      return nb;
+    }
+
+    if (--j < i || nb === -2) return 0;
+    nb = utf8CheckByte(buf[j]);
+
+    if (nb >= 0) {
+      if (nb > 0) self.lastNeed = nb - 2;
+      return nb;
+    }
+
+    if (--j < i || nb === -2) return 0;
+    nb = utf8CheckByte(buf[j]);
+
+    if (nb >= 0) {
+      if (nb > 0) {
+        if (nb === 2) nb = 0;else self.lastNeed = nb - 3;
+      }
+
+      return nb;
+    }
+
+    return 0;
+  } // Validates as many continuation bytes for a multi-byte UTF-8 character as
+  // needed or are available. If we see a non-continuation byte where we expect
+  // one, we "replace" the validated continuation bytes we've seen so far with
+  // a single UTF-8 replacement character ('\ufffd'), to match v8's UTF-8 decoding
+  // behavior. The continuation byte check is included three times in the case
+  // where all of the continuation bytes for a character exist in the same buffer.
+  // It is also done this way as a slight performance increase instead of using a
+  // loop.
+
+
+  function utf8CheckExtraBytes(self, buf, p) {
+    if ((buf[0] & 0xC0) !== 0x80) {
+      self.lastNeed = 0;
+      return "\uFFFD";
+    }
+
+    if (self.lastNeed > 1 && buf.length > 1) {
+      if ((buf[1] & 0xC0) !== 0x80) {
+        self.lastNeed = 1;
+        return "\uFFFD";
+      }
+
+      if (self.lastNeed > 2 && buf.length > 2) {
+        if ((buf[2] & 0xC0) !== 0x80) {
+          self.lastNeed = 2;
+          return "\uFFFD";
+        }
+      }
+    }
+  } // Attempts to complete a multi-byte UTF-8 character using bytes from a Buffer.
+
+
+  function utf8FillLast(buf) {
+    var p = this.lastTotal - this.lastNeed;
+    var r = utf8CheckExtraBytes(this, buf);
+    if (r !== undefined) return r;
+
+    if (this.lastNeed <= buf.length) {
+      buf.copy(this.lastChar, p, 0, this.lastNeed);
+      return this.lastChar.toString(this.encoding, 0, this.lastTotal);
+    }
+
+    buf.copy(this.lastChar, p, 0, buf.length);
+    this.lastNeed -= buf.length;
+  } // Returns all complete UTF-8 characters in a Buffer. If the Buffer ended on a
+  // partial character, the character's bytes are buffered until the required
+  // number of bytes are available.
+
+
+  function utf8Text(buf, i) {
+    var total = utf8CheckIncomplete(this, buf, i);
+    if (!this.lastNeed) return buf.toString('utf8', i);
+    this.lastTotal = total;
+    var end = buf.length - (total - this.lastNeed);
+    buf.copy(this.lastChar, 0, end);
+    return buf.toString('utf8', i, end);
+  } // For UTF-8, a replacement character is added when ending on a partial
+  // character.
+
+
+  function utf8End(buf) {
+    var r = buf && buf.length ? this.write(buf) : '';
+    if (this.lastNeed) return r + "\uFFFD";
+    return r;
+  } // UTF-16LE typically needs two bytes per character, but even if we have an even
+  // number of bytes available, we need to check if we end on a leading/high
+  // surrogate. In that case, we need to wait for the next two bytes in order to
+  // decode the last character properly.
+
+
+  function utf16Text(buf, i) {
+    if ((buf.length - i) % 2 === 0) {
+      var r = buf.toString('utf16le', i);
+
+      if (r) {
+        var c = r.charCodeAt(r.length - 1);
+
+        if (c >= 0xD800 && c <= 0xDBFF) {
+          this.lastNeed = 2;
+          this.lastTotal = 4;
+          this.lastChar[0] = buf[buf.length - 2];
+          this.lastChar[1] = buf[buf.length - 1];
+          return r.slice(0, -1);
+        }
+      }
+
+      return r;
+    }
+
+    this.lastNeed = 1;
+    this.lastTotal = 2;
+    this.lastChar[0] = buf[buf.length - 1];
+    return buf.toString('utf16le', i, buf.length - 1);
+  } // For UTF-16LE we do not explicitly append special replacement characters if we
+  // end on a partial character, we simply let v8 handle that.
+
+
+  function utf16End(buf) {
+    var r = buf && buf.length ? this.write(buf) : '';
+
+    if (this.lastNeed) {
+      var end = this.lastTotal - this.lastNeed;
+      return r + this.lastChar.toString('utf16le', 0, end);
+    }
+
+    return r;
+  }
+
+  function base64Text(buf, i) {
+    var n = (buf.length - i) % 3;
+    if (n === 0) return buf.toString('base64', i);
+    this.lastNeed = 3 - n;
+    this.lastTotal = 3;
+
+    if (n === 1) {
+      this.lastChar[0] = buf[buf.length - 1];
+    } else {
+      this.lastChar[0] = buf[buf.length - 2];
+      this.lastChar[1] = buf[buf.length - 1];
+    }
+
+    return buf.toString('base64', i, buf.length - n);
+  }
+
+  function base64End(buf) {
+    var r = buf && buf.length ? this.write(buf) : '';
+    if (this.lastNeed) return r + this.lastChar.toString('base64', 0, 3 - this.lastNeed);
+    return r;
+  } // Pass bytes on through for single-byte encodings (e.g. ascii, latin1, hex)
+
+
+  function simpleWrite(buf) {
+    return buf.toString(this.encoding);
+  }
+
+  function simpleEnd(buf) {
+    return buf && buf.length ? this.write(buf) : '';
+  }
+
+  var string_decoder = {
+    StringDecoder: StringDecoder_1
   };
 
-  function passThroughWrite(buffer) {
-    return buffer.toString(this.encoding);
+  var ERR_STREAM_PREMATURE_CLOSE = errorsBrowser.codes.ERR_STREAM_PREMATURE_CLOSE;
+
+  function once$1(callback) {
+    var called = false;
+    return function () {
+      if (called) return;
+      called = true;
+
+      for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+        args[_key] = arguments[_key];
+      }
+
+      callback.apply(this, args);
+    };
   }
 
-  function utf16DetectIncompleteChar(buffer) {
-    this.charReceived = buffer.length % 2;
-    this.charLength = this.charReceived ? 2 : 0;
+  function noop$1() {}
+
+  function isRequest(stream) {
+    return stream.setHeader && typeof stream.abort === 'function';
   }
 
-  function base64DetectIncompleteChar(buffer) {
-    this.charReceived = buffer.length % 3;
-    this.charLength = this.charReceived ? 3 : 0;
+  function eos(stream, opts, callback) {
+    if (typeof opts === 'function') return eos(stream, null, opts);
+    if (!opts) opts = {};
+    callback = once$1(callback || noop$1);
+    var readable = opts.readable || opts.readable !== false && stream.readable;
+    var writable = opts.writable || opts.writable !== false && stream.writable;
+
+    var onlegacyfinish = function onlegacyfinish() {
+      if (!stream.writable) onfinish();
+    };
+
+    var writableEnded = stream._writableState && stream._writableState.finished;
+
+    var onfinish = function onfinish() {
+      writable = false;
+      writableEnded = true;
+      if (!readable) callback.call(stream);
+    };
+
+    var readableEnded = stream._readableState && stream._readableState.endEmitted;
+
+    var onend = function onend() {
+      readable = false;
+      readableEnded = true;
+      if (!writable) callback.call(stream);
+    };
+
+    var onerror = function onerror(err) {
+      callback.call(stream, err);
+    };
+
+    var onclose = function onclose() {
+      var err;
+
+      if (readable && !readableEnded) {
+        if (!stream._readableState || !stream._readableState.ended) err = new ERR_STREAM_PREMATURE_CLOSE();
+        return callback.call(stream, err);
+      }
+
+      if (writable && !writableEnded) {
+        if (!stream._writableState || !stream._writableState.ended) err = new ERR_STREAM_PREMATURE_CLOSE();
+        return callback.call(stream, err);
+      }
+    };
+
+    var onrequest = function onrequest() {
+      stream.req.on('finish', onfinish);
+    };
+
+    if (isRequest(stream)) {
+      stream.on('complete', onfinish);
+      stream.on('abort', onclose);
+      if (stream.req) onrequest();else stream.on('request', onrequest);
+    } else if (writable && !stream._writableState) {
+      // legacy streams
+      stream.on('end', onlegacyfinish);
+      stream.on('close', onlegacyfinish);
+    }
+
+    stream.on('end', onend);
+    stream.on('finish', onfinish);
+    if (opts.error !== false) stream.on('error', onerror);
+    stream.on('close', onclose);
+    return function () {
+      stream.removeListener('complete', onfinish);
+      stream.removeListener('abort', onclose);
+      stream.removeListener('request', onrequest);
+      if (stream.req) stream.req.removeListener('finish', onfinish);
+      stream.removeListener('end', onlegacyfinish);
+      stream.removeListener('close', onlegacyfinish);
+      stream.removeListener('finish', onfinish);
+      stream.removeListener('end', onend);
+      stream.removeListener('error', onerror);
+      stream.removeListener('close', onclose);
+    };
   }
 
-  var stringDecoder = /*#__PURE__*/Object.freeze({
-    __proto__: null,
-    StringDecoder: StringDecoder
-  });
+  var endOfStream = eos;
+
+  var _Object$setPrototypeO;
+
+  function _defineProperty$2(obj, key, value) {
+    if (key in obj) {
+      Object.defineProperty(obj, key, {
+        value: value,
+        enumerable: true,
+        configurable: true,
+        writable: true
+      });
+    } else {
+      obj[key] = value;
+    }
+
+    return obj;
+  }
+
+  var kLastResolve = Symbol('lastResolve');
+  var kLastReject = Symbol('lastReject');
+  var kError = Symbol('error');
+  var kEnded = Symbol('ended');
+  var kLastPromise = Symbol('lastPromise');
+  var kHandlePromise = Symbol('handlePromise');
+  var kStream = Symbol('stream');
+
+  function createIterResult(value, done) {
+    return {
+      value: value,
+      done: done
+    };
+  }
+
+  function readAndResolve(iter) {
+    var resolve = iter[kLastResolve];
+
+    if (resolve !== null) {
+      var data = iter[kStream].read(); // we defer if data is null
+      // we can be expecting either 'end' or
+      // 'error'
+
+      if (data !== null) {
+        iter[kLastPromise] = null;
+        iter[kLastResolve] = null;
+        iter[kLastReject] = null;
+        resolve(createIterResult(data, false));
+      }
+    }
+  }
+
+  function onReadable(iter) {
+    // we wait for the next tick, because it might
+    // emit an error with process.nextTick
+    nextTick(readAndResolve, iter);
+  }
+
+  function wrapForNext(lastPromise, iter) {
+    return function (resolve, reject) {
+      lastPromise.then(function () {
+        if (iter[kEnded]) {
+          resolve(createIterResult(undefined, true));
+          return;
+        }
+
+        iter[kHandlePromise](resolve, reject);
+      }, reject);
+    };
+  }
+
+  var AsyncIteratorPrototype = Object.getPrototypeOf(function () {});
+  var ReadableStreamAsyncIteratorPrototype = Object.setPrototypeOf((_Object$setPrototypeO = {
+    get stream() {
+      return this[kStream];
+    },
+
+    next: function next() {
+      var _this = this; // if we have detected an error in the meanwhile
+      // reject straight away
+
+
+      var error = this[kError];
+
+      if (error !== null) {
+        return Promise.reject(error);
+      }
+
+      if (this[kEnded]) {
+        return Promise.resolve(createIterResult(undefined, true));
+      }
+
+      if (this[kStream].destroyed) {
+        // We need to defer via nextTick because if .destroy(err) is
+        // called, the error will be emitted via nextTick, and
+        // we cannot guarantee that there is no error lingering around
+        // waiting to be emitted.
+        return new Promise(function (resolve, reject) {
+          nextTick(function () {
+            if (_this[kError]) {
+              reject(_this[kError]);
+            } else {
+              resolve(createIterResult(undefined, true));
+            }
+          });
+        });
+      } // if we have multiple next() calls
+      // we will wait for the previous Promise to finish
+      // this logic is optimized to support for await loops,
+      // where next() is only called once at a time
+
+
+      var lastPromise = this[kLastPromise];
+      var promise;
+
+      if (lastPromise) {
+        promise = new Promise(wrapForNext(lastPromise, this));
+      } else {
+        // fast path needed to support multiple this.push()
+        // without triggering the next() queue
+        var data = this[kStream].read();
+
+        if (data !== null) {
+          return Promise.resolve(createIterResult(data, false));
+        }
+
+        promise = new Promise(this[kHandlePromise]);
+      }
+
+      this[kLastPromise] = promise;
+      return promise;
+    }
+  }, _defineProperty$2(_Object$setPrototypeO, Symbol.asyncIterator, function () {
+    return this;
+  }), _defineProperty$2(_Object$setPrototypeO, "return", function _return() {
+    var _this2 = this; // destroy(err, cb) is a private API
+    // we can guarantee we have that here, because we control the
+    // Readable class this is attached to
+
+
+    return new Promise(function (resolve, reject) {
+      _this2[kStream].destroy(null, function (err) {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        resolve(createIterResult(undefined, true));
+      });
+    });
+  }), _Object$setPrototypeO), AsyncIteratorPrototype);
+
+  var createReadableStreamAsyncIterator = function createReadableStreamAsyncIterator(stream) {
+    var _Object$create;
+
+    var iterator = Object.create(ReadableStreamAsyncIteratorPrototype, (_Object$create = {}, _defineProperty$2(_Object$create, kStream, {
+      value: stream,
+      writable: true
+    }), _defineProperty$2(_Object$create, kLastResolve, {
+      value: null,
+      writable: true
+    }), _defineProperty$2(_Object$create, kLastReject, {
+      value: null,
+      writable: true
+    }), _defineProperty$2(_Object$create, kError, {
+      value: null,
+      writable: true
+    }), _defineProperty$2(_Object$create, kEnded, {
+      value: stream._readableState.endEmitted,
+      writable: true
+    }), _defineProperty$2(_Object$create, kHandlePromise, {
+      value: function value(resolve, reject) {
+        var data = iterator[kStream].read();
+
+        if (data) {
+          iterator[kLastPromise] = null;
+          iterator[kLastResolve] = null;
+          iterator[kLastReject] = null;
+          resolve(createIterResult(data, false));
+        } else {
+          iterator[kLastResolve] = resolve;
+          iterator[kLastReject] = reject;
+        }
+      },
+      writable: true
+    }), _Object$create));
+    iterator[kLastPromise] = null;
+    endOfStream(stream, function (err) {
+      if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        var reject = iterator[kLastReject]; // reject if we are waiting for data in the Promise
+        // returned by next() and store the error
+
+        if (reject !== null) {
+          iterator[kLastPromise] = null;
+          iterator[kLastResolve] = null;
+          iterator[kLastReject] = null;
+          reject(err);
+        }
+
+        iterator[kError] = err;
+        return;
+      }
+
+      var resolve = iterator[kLastResolve];
+
+      if (resolve !== null) {
+        iterator[kLastPromise] = null;
+        iterator[kLastResolve] = null;
+        iterator[kLastReject] = null;
+        resolve(createIterResult(undefined, true));
+      }
+
+      iterator[kEnded] = true;
+    });
+    stream.on('readable', onReadable.bind(null, iterator));
+    return iterator;
+  };
+
+  var async_iterator = createReadableStreamAsyncIterator;
+
+  var fromBrowser = function fromBrowser() {
+    throw new Error('Readable.from is not available in the browser');
+  };
+
+  var _stream_readable = Readable;
+  /*<replacement>*/
+
+  var Duplex$2;
+  /*</replacement>*/
 
   Readable.ReadableState = ReadableState;
-  var debug = debuglog('stream');
-  inherits$2(Readable, EventEmitter);
+
+  var EElistenerCount = function EElistenerCount(emitter, type) {
+    return emitter.listeners(type).length;
+  };
+  /*</replacement>*/
+
+  /*<replacement>*/
+
+  /*</replacement>*/
+
+
+  var Buffer$5 = bufferEs6.Buffer;
+
+  var OurUint8Array$1 = commonjsGlobal.Uint8Array || function () {};
+
+  function _uint8ArrayToBuffer$1(chunk) {
+    return Buffer$5.from(chunk);
+  }
+
+  function _isUint8Array$1(obj) {
+    return Buffer$5.isBuffer(obj) || obj instanceof OurUint8Array$1;
+  }
+  /*<replacement>*/
+
+
+  var debug;
+
+  if (debugUtil && debugUtil.debuglog) {
+    debug = debugUtil.debuglog('stream');
+  } else {
+    debug = function debug() {};
+  }
+  /*</replacement>*/
+
+
+  var getHighWaterMark$2 = state.getHighWaterMark;
+  var _require$codes$1 = errorsBrowser.codes,
+      ERR_INVALID_ARG_TYPE$1 = _require$codes$1.ERR_INVALID_ARG_TYPE,
+      ERR_STREAM_PUSH_AFTER_EOF = _require$codes$1.ERR_STREAM_PUSH_AFTER_EOF,
+      ERR_METHOD_NOT_IMPLEMENTED$1 = _require$codes$1.ERR_METHOD_NOT_IMPLEMENTED,
+      ERR_STREAM_UNSHIFT_AFTER_END_EVENT = _require$codes$1.ERR_STREAM_UNSHIFT_AFTER_END_EVENT; // Lazy loaded to improve the startup performance.
+
+  var StringDecoder$1;
+  var createReadableStreamAsyncIterator$1;
+  var from$1;
+  inherits_browser(Readable, streamBrowser);
+  var errorOrDestroy$2 = destroy_1.errorOrDestroy;
+  var kProxyEvents = ['error', 'close', 'destroy', 'pause', 'resume'];
 
   function prependListener(emitter, event, fn) {
     // Sadly this is not cacheable as some libraries bundle their own
     // event emitter implementation with them.
-    if (typeof emitter.prependListener === 'function') {
-      return emitter.prependListener(event, fn);
-    } else {
-      // This is a hack to make sure that our error handler is attached before any
-      // userland ones.  NEVER DO THIS. This is here only because this code needs
-      // to continue to work with older versions of Node.js that do not include
-      // the prependListener() method. The goal is to eventually remove this hack.
-      if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (Array.isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
-    }
+    if (typeof emitter.prependListener === 'function') return emitter.prependListener(event, fn); // This is a hack to make sure that our error handler is attached before any
+    // userland ones.  NEVER DO THIS. This is here only because this code needs
+    // to continue to work with older versions of Node.js that do not include
+    // the prependListener() method. The goal is to eventually remove this hack.
+
+    if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (Array.isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
   }
 
-  function listenerCount$1(emitter, type) {
-    return emitter.listeners(type).length;
-  }
+  function ReadableState(options, stream, isDuplex) {
+    Duplex$2 = Duplex$2 || _stream_duplex;
+    options = options || {}; // Duplex streams are both readable and writable, but share
+    // the same options object.
+    // However, some cases require setting options to different
+    // values for the readable and the writable sides of the duplex stream.
+    // These options can be provided separately as readableXXX and writableXXX.
 
-  function ReadableState(options, stream) {
-    options = options || {}; // object stream flag. Used to make read(n) ignore n and to
+    if (typeof isDuplex !== 'boolean') isDuplex = stream instanceof Duplex$2; // object stream flag. Used to make read(n) ignore n and to
     // make all the buffer merging and length checks go away
 
     this.objectMode = !!options.objectMode;
-    if (stream instanceof Duplex) this.objectMode = this.objectMode || !!options.readableObjectMode; // the point at which it stops calling _read() to fill the buffer
+    if (isDuplex) this.objectMode = this.objectMode || !!options.readableObjectMode; // the point at which it stops calling _read() to fill the buffer
     // Note: 0 is a valid value, means "don't call _read preemptively ever"
 
-    var hwm = options.highWaterMark;
-    var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-    this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm; // cast to ints.
-
-    this.highWaterMark = ~~this.highWaterMark; // A linked list is used to store data chunks instead of an array because the
+    this.highWaterMark = getHighWaterMark$2(this, options, 'readableHighWaterMark', isDuplex); // A linked list is used to store data chunks instead of an array because the
     // linked list can remove elements from the beginning faster than
     // array.shift()
 
-    this.buffer = new BufferList();
+    this.buffer = new buffer_list();
     this.length = 0;
     this.pipes = null;
     this.pipesCount = 0;
     this.flowing = null;
     this.ended = false;
     this.endEmitted = false;
-    this.reading = false; // a flag to be able to tell if the onwrite cb is called immediately,
-    // or on a later tick.  We set this to true at first, because any
-    // actions that shouldn't happen until "later" should generally also
-    // not happen before the first write call.
+    this.reading = false; // a flag to be able to tell if the event 'readable'/'data' is emitted
+    // immediately, or on a later tick.  We set this to true at first, because
+    // any actions that shouldn't happen until "later" should generally also
+    // not happen before the first read call.
 
     this.sync = true; // whenever we return null, then we set a flag to say
     // that we're awaiting a 'readable' event emission.
@@ -39056,14 +42962,18 @@ document.getElementById("create-token").onclick = create_token_click;
     this.needReadable = false;
     this.emittedReadable = false;
     this.readableListening = false;
-    this.resumeScheduled = false; // Crypto is kind of old and crusty.  Historically, its default string
+    this.resumeScheduled = false;
+    this.paused = true; // Should close be emitted on destroy. Defaults to true.
+
+    this.emitClose = options.emitClose !== false; // Should .destroy() be called after 'end' (and potentially 'finish')
+
+    this.autoDestroy = !!options.autoDestroy; // has it been destroyed
+
+    this.destroyed = false; // Crypto is kind of old and crusty.  Historically, its default string
     // encoding is 'binary' so we have to make this configurable.
     // Everything else in the universe uses 'utf8', though.
 
-    this.defaultEncoding = options.defaultEncoding || 'utf8'; // when piping, we only care about 'readable' events that happen
-    // after read()ing all the bytes and not getting any pushback.
-
-    this.ranOut = false; // the number of writers that are awaiting a drain event in .pipe()s
+    this.defaultEncoding = options.defaultEncoding || 'utf8'; // the number of writers that are awaiting a drain event in .pipe()s
 
     this.awaitDrain = 0; // if true, a maybeReadMore has been scheduled
 
@@ -39072,119 +42982,195 @@ document.getElementById("create-token").onclick = create_token_click;
     this.encoding = null;
 
     if (options.encoding) {
-      this.decoder = new StringDecoder(options.encoding);
+      if (!StringDecoder$1) StringDecoder$1 = string_decoder.StringDecoder;
+      this.decoder = new StringDecoder$1(options.encoding);
       this.encoding = options.encoding;
     }
   }
+
   function Readable(options) {
-    if (!(this instanceof Readable)) return new Readable(options);
-    this._readableState = new ReadableState(options, this); // legacy
+    Duplex$2 = Duplex$2 || _stream_duplex;
+    if (!(this instanceof Readable)) return new Readable(options); // Checking for a Stream.Duplex instance is faster here instead of inside
+    // the ReadableState constructor, at least with V8 6.5
+
+    var isDuplex = this instanceof Duplex$2;
+    this._readableState = new ReadableState(options, this, isDuplex); // legacy
 
     this.readable = true;
-    if (options && typeof options.read === 'function') this._read = options.read;
-    EventEmitter.call(this);
-  } // Manually shove something into the read() buffer.
+
+    if (options) {
+      if (typeof options.read === 'function') this._read = options.read;
+      if (typeof options.destroy === 'function') this._destroy = options.destroy;
+    }
+
+    streamBrowser.call(this);
+  }
+
+  Object.defineProperty(Readable.prototype, 'destroyed', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      if (this._readableState === undefined) {
+        return false;
+      }
+
+      return this._readableState.destroyed;
+    },
+    set: function set(value) {
+      // we ignore the value if the stream
+      // has not been initialized yet
+      if (!this._readableState) {
+        return;
+      } // backward compatibility, the user is explicitly
+      // managing destroyed
+
+
+      this._readableState.destroyed = value;
+    }
+  });
+  Readable.prototype.destroy = destroy_1.destroy;
+  Readable.prototype._undestroy = destroy_1.undestroy;
+
+  Readable.prototype._destroy = function (err, cb) {
+    cb(err);
+  }; // Manually shove something into the read() buffer.
   // This returns true if the highWaterMark has not been hit yet,
   // similar to how Writable.write() returns true if you should
   // write() some more.
 
+
   Readable.prototype.push = function (chunk, encoding) {
     var state = this._readableState;
+    var skipChunkCheck;
 
-    if (!state.objectMode && typeof chunk === 'string') {
-      encoding = encoding || state.defaultEncoding;
+    if (!state.objectMode) {
+      if (typeof chunk === 'string') {
+        encoding = encoding || state.defaultEncoding;
 
-      if (encoding !== state.encoding) {
-        chunk = Buffer$1.from(chunk, encoding);
-        encoding = '';
+        if (encoding !== state.encoding) {
+          chunk = Buffer$5.from(chunk, encoding);
+          encoding = '';
+        }
+
+        skipChunkCheck = true;
       }
+    } else {
+      skipChunkCheck = true;
     }
 
-    return readableAddChunk(this, state, chunk, encoding, false);
+    return readableAddChunk(this, chunk, encoding, false, skipChunkCheck);
   }; // Unshift should *always* be something directly out of read()
 
 
   Readable.prototype.unshift = function (chunk) {
-    var state = this._readableState;
-    return readableAddChunk(this, state, chunk, '', true);
+    return readableAddChunk(this, chunk, null, true, false);
   };
+
+  function readableAddChunk(stream, chunk, encoding, addToFront, skipChunkCheck) {
+    debug('readableAddChunk', chunk);
+    var state = stream._readableState;
+
+    if (chunk === null) {
+      state.reading = false;
+      onEofChunk(stream, state);
+    } else {
+      var er;
+      if (!skipChunkCheck) er = chunkInvalid(state, chunk);
+
+      if (er) {
+        errorOrDestroy$2(stream, er);
+      } else if (state.objectMode || chunk && chunk.length > 0) {
+        if (typeof chunk !== 'string' && !state.objectMode && Object.getPrototypeOf(chunk) !== Buffer$5.prototype) {
+          chunk = _uint8ArrayToBuffer$1(chunk);
+        }
+
+        if (addToFront) {
+          if (state.endEmitted) errorOrDestroy$2(stream, new ERR_STREAM_UNSHIFT_AFTER_END_EVENT());else addChunk(stream, state, chunk, true);
+        } else if (state.ended) {
+          errorOrDestroy$2(stream, new ERR_STREAM_PUSH_AFTER_EOF());
+        } else if (state.destroyed) {
+          return false;
+        } else {
+          state.reading = false;
+
+          if (state.decoder && !encoding) {
+            chunk = state.decoder.write(chunk);
+            if (state.objectMode || chunk.length !== 0) addChunk(stream, state, chunk, false);else maybeReadMore(stream, state);
+          } else {
+            addChunk(stream, state, chunk, false);
+          }
+        }
+      } else if (!addToFront) {
+        state.reading = false;
+        maybeReadMore(stream, state);
+      }
+    } // We can push more data if we are below the highWaterMark.
+    // Also, if we have no data yet, we can stand some more bytes.
+    // This is to work around cases where hwm=0, such as the repl.
+
+
+    return !state.ended && (state.length < state.highWaterMark || state.length === 0);
+  }
+
+  function addChunk(stream, state, chunk, addToFront) {
+    if (state.flowing && state.length === 0 && !state.sync) {
+      state.awaitDrain = 0;
+      stream.emit('data', chunk);
+    } else {
+      // update the buffer info.
+      state.length += state.objectMode ? 1 : chunk.length;
+      if (addToFront) state.buffer.unshift(chunk);else state.buffer.push(chunk);
+      if (state.needReadable) emitReadable(stream);
+    }
+
+    maybeReadMore(stream, state);
+  }
+
+  function chunkInvalid(state, chunk) {
+    var er;
+
+    if (!_isUint8Array$1(chunk) && typeof chunk !== 'string' && chunk !== undefined && !state.objectMode) {
+      er = new ERR_INVALID_ARG_TYPE$1('chunk', ['string', 'Buffer', 'Uint8Array'], chunk);
+    }
+
+    return er;
+  }
 
   Readable.prototype.isPaused = function () {
     return this._readableState.flowing === false;
-  };
-
-  function readableAddChunk(stream, state, chunk, encoding, addToFront) {
-    var er = chunkInvalid(state, chunk);
-
-    if (er) {
-      stream.emit('error', er);
-    } else if (chunk === null) {
-      state.reading = false;
-      onEofChunk(stream, state);
-    } else if (state.objectMode || chunk && chunk.length > 0) {
-      if (state.ended && !addToFront) {
-        var e = new Error('stream.push() after EOF');
-        stream.emit('error', e);
-      } else if (state.endEmitted && addToFront) {
-        var _e = new Error('stream.unshift() after end event');
-
-        stream.emit('error', _e);
-      } else {
-        var skipAdd;
-
-        if (state.decoder && !addToFront && !encoding) {
-          chunk = state.decoder.write(chunk);
-          skipAdd = !state.objectMode && chunk.length === 0;
-        }
-
-        if (!addToFront) state.reading = false; // Don't add to the buffer if we've decoded to an empty string chunk and
-        // we're not in object mode
-
-        if (!skipAdd) {
-          // if we want the data now, just emit it.
-          if (state.flowing && state.length === 0 && !state.sync) {
-            stream.emit('data', chunk);
-            stream.read(0);
-          } else {
-            // update the buffer info.
-            state.length += state.objectMode ? 1 : chunk.length;
-            if (addToFront) state.buffer.unshift(chunk);else state.buffer.push(chunk);
-            if (state.needReadable) emitReadable(stream);
-          }
-        }
-
-        maybeReadMore(stream, state);
-      }
-    } else if (!addToFront) {
-      state.reading = false;
-    }
-
-    return needMoreData(state);
-  } // if it's past the high water mark, we can push in some more.
-  // Also, if we have no data yet, we can stand some
-  // more bytes.  This is to work around cases where hwm=0,
-  // such as the repl.  Also, if the push() triggered a
-  // readable event, and the user called read(largeNumber) such that
-  // needReadable was set, then we ought to push more, so that another
-  // 'readable' event will be triggered.
-
-
-  function needMoreData(state) {
-    return !state.ended && (state.needReadable || state.length < state.highWaterMark || state.length === 0);
-  } // backwards compatibility.
+  }; // backwards compatibility.
 
 
   Readable.prototype.setEncoding = function (enc) {
-    this._readableState.decoder = new StringDecoder(enc);
-    this._readableState.encoding = enc;
+    if (!StringDecoder$1) StringDecoder$1 = string_decoder.StringDecoder;
+    var decoder = new StringDecoder$1(enc);
+    this._readableState.decoder = decoder; // If setEncoding(null), decoder.encoding equals utf8
+
+    this._readableState.encoding = this._readableState.decoder.encoding; // Iterate over current buffer to convert already stored Buffers:
+
+    var p = this._readableState.buffer.head;
+    var content = '';
+
+    while (p !== null) {
+      content += decoder.write(p.data);
+      p = p.next;
+    }
+
+    this._readableState.buffer.clear();
+
+    if (content !== '') this._readableState.buffer.push(content);
+    this._readableState.length = content.length;
     return this;
-  }; // Don't raise the hwm > 8MB
+  }; // Don't raise the hwm > 1GB
 
 
-  var MAX_HWM = 0x800000;
+  var MAX_HWM = 0x40000000;
 
   function computeNewHighWaterMark(n) {
     if (n >= MAX_HWM) {
+      // TODO(ronag): Throw ERR_VALUE_OUT_OF_RANGE.
       n = MAX_HWM;
     } else {
       // Get the next highest power of 2 to prevent increasing hwm excessively in
@@ -39234,7 +43220,7 @@ document.getElementById("create-token").onclick = create_token_click;
     // already have a bunch of data in the buffer, then just trigger
     // the 'readable' event and move on.
 
-    if (n === 0 && state.needReadable && (state.length >= state.highWaterMark || state.ended)) {
+    if (n === 0 && state.needReadable && ((state.highWaterMark !== 0 ? state.length >= state.highWaterMark : state.length > 0) || state.ended)) {
       debug('read: emitReadable', state.length, state.ended);
       if (state.length === 0 && state.ended) endReadable(this);else emitReadable(this);
       return null;
@@ -39301,10 +43287,11 @@ document.getElementById("create-token").onclick = create_token_click;
     if (n > 0) ret = fromList(n, state);else ret = null;
 
     if (ret === null) {
-      state.needReadable = true;
+      state.needReadable = state.length <= state.highWaterMark;
       n = 0;
     } else {
       state.length -= n;
+      state.awaitDrain = 0;
     }
 
     if (state.length === 0) {
@@ -39319,17 +43306,8 @@ document.getElementById("create-token").onclick = create_token_click;
     return ret;
   };
 
-  function chunkInvalid(state, chunk) {
-    var er = null;
-
-    if (!isBuffer(chunk) && typeof chunk !== 'string' && chunk !== null && chunk !== undefined && !state.objectMode) {
-      er = new TypeError('Invalid non-string/buffer chunk');
-    }
-
-    return er;
-  }
-
   function onEofChunk(stream, state) {
+    debug('onEofChunk');
     if (state.ended) return;
 
     if (state.decoder) {
@@ -39341,9 +43319,22 @@ document.getElementById("create-token").onclick = create_token_click;
       }
     }
 
-    state.ended = true; // emit 'readable' now to make sure it gets picked up.
+    state.ended = true;
 
-    emitReadable(stream);
+    if (state.sync) {
+      // if we are sync, wait until next tick to emit the data.
+      // Otherwise we risk emitting data in the flow()
+      // the readable code triggers during a read() call
+      emitReadable(stream);
+    } else {
+      // emit 'readable' now to make sure it gets picked up.
+      state.needReadable = false;
+
+      if (!state.emittedReadable) {
+        state.emittedReadable = true;
+        emitReadable_(stream);
+      }
+    }
   } // Don't emit readable right away in sync mode, because this can trigger
   // another read() call => stack overflow.  This way, it might trigger
   // a nextTick recursion warning, but that's not so bad.
@@ -39351,18 +43342,32 @@ document.getElementById("create-token").onclick = create_token_click;
 
   function emitReadable(stream) {
     var state = stream._readableState;
+    debug('emitReadable', state.needReadable, state.emittedReadable);
     state.needReadable = false;
 
     if (!state.emittedReadable) {
       debug('emitReadable', state.flowing);
       state.emittedReadable = true;
-      if (state.sync) nextTick(emitReadable_, stream);else emitReadable_(stream);
+      nextTick(emitReadable_, stream);
     }
   }
 
   function emitReadable_(stream) {
-    debug('emit readable');
-    stream.emit('readable');
+    var state = stream._readableState;
+    debug('emitReadable_', state.destroyed, state.length, state.ended);
+
+    if (!state.destroyed && (state.length || state.ended)) {
+      stream.emit('readable');
+      state.emittedReadable = false;
+    } // The stream needs another readable event if
+    // 1. It is not flowing, as the flow mechanism will take
+    //    care of it.
+    // 2. It is not ended.
+    // 3. It is below the highWaterMark, so we can schedule
+    //    another readable later.
+
+
+    state.needReadable = !state.flowing && !state.ended && state.length <= state.highWaterMark;
     flow(stream);
   } // at this point, the user has presumably seen the 'readable' event,
   // and called read() to consume some data.  that may have triggered
@@ -39380,13 +43385,35 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function maybeReadMore_(stream, state) {
-    var len = state.length;
-
-    while (!state.reading && !state.flowing && !state.ended && state.length < state.highWaterMark) {
+    // Attempt to read more data if we should.
+    //
+    // The conditions for reading more data are (one of):
+    // - Not enough data buffered (state.length < state.highWaterMark). The loop
+    //   is responsible for filling the buffer with enough data if such data
+    //   is available. If highWaterMark is 0 and we are not in the flowing mode
+    //   we should _not_ attempt to buffer any extra data. We'll get more data
+    //   when the stream consumer calls read() instead.
+    // - No data in the buffer, and the stream is in flowing mode. In this mode
+    //   the loop below is responsible for ensuring read() is called. Failing to
+    //   call read here would abort the flow and there's no other mechanism for
+    //   continuing the flow if the stream consumer has just subscribed to the
+    //   'data' event.
+    //
+    // In addition to the above conditions to keep reading data, the following
+    // conditions prevent the data from being read:
+    // - The stream has ended (state.ended).
+    // - There is already a pending 'read' operation (state.reading). This is a
+    //   case where the the stream has called the implementation defined _read()
+    //   method, but they are processing the call asynchronously and have _not_
+    //   called push() with new data. In this case we skip performing more
+    //   read()s. The execution ends in this method again after the _read() ends
+    //   up calling push() with more data.
+    while (!state.reading && !state.ended && (state.length < state.highWaterMark || state.flowing && state.length === 0)) {
+      var len = state.length;
       debug('maybeReadMore read 0');
       stream.read(0);
       if (len === state.length) // didn't get any data, stop spinning.
-        break;else len = state.length;
+        break;
     }
 
     state.readingMore = false;
@@ -39397,7 +43424,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
 
   Readable.prototype._read = function (n) {
-    this.emit('error', new Error('not implemented'));
+    errorOrDestroy$2(this, new ERR_METHOD_NOT_IMPLEMENTED$1('_read()'));
   };
 
   Readable.prototype.pipe = function (dest, pipeOpts) {
@@ -39420,16 +43447,19 @@ document.getElementById("create-token").onclick = create_token_click;
 
     state.pipesCount += 1;
     debug('pipe count=%d opts=%j', state.pipesCount, pipeOpts);
-    var doEnd = !pipeOpts || pipeOpts.end !== false;
-    var endFn = doEnd ? onend : cleanup;
+    var doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
+    var endFn = doEnd ? onend : unpipe;
     if (state.endEmitted) nextTick(endFn);else src.once('end', endFn);
     dest.on('unpipe', onunpipe);
 
-    function onunpipe(readable) {
+    function onunpipe(readable, unpipeInfo) {
       debug('onunpipe');
 
       if (readable === src) {
-        cleanup();
+        if (unpipeInfo && unpipeInfo.hasUnpiped === false) {
+          unpipeInfo.hasUnpiped = true;
+          cleanup();
+        }
       }
     }
 
@@ -39455,7 +43485,7 @@ document.getElementById("create-token").onclick = create_token_click;
       dest.removeListener('error', onerror);
       dest.removeListener('unpipe', onunpipe);
       src.removeListener('end', onend);
-      src.removeListener('end', cleanup);
+      src.removeListener('end', unpipe);
       src.removeListener('data', ondata);
       cleanedUp = true; // if the reader is waiting for a drain event from this
       // specific writer, then it would cause it to never start
@@ -39464,29 +43494,23 @@ document.getElementById("create-token").onclick = create_token_click;
       // If we don't know, then assume that we are waiting for one.
 
       if (state.awaitDrain && (!dest._writableState || dest._writableState.needDrain)) ondrain();
-    } // If the user pushes more data while we're writing to dest then we'll end up
-    // in ondata again. However, we only want to increase awaitDrain once because
-    // dest will only emit one 'drain' event for the multiple writes.
-    // => Introduce a guard on increasing awaitDrain.
+    }
 
-
-    var increasedAwaitDrain = false;
     src.on('data', ondata);
 
     function ondata(chunk) {
       debug('ondata');
-      increasedAwaitDrain = false;
       var ret = dest.write(chunk);
+      debug('dest.write', ret);
 
-      if (false === ret && !increasedAwaitDrain) {
+      if (ret === false) {
         // If the user unpiped during `dest.write()`, it is possible
         // to get stuck in a permanently paused state if that write
         // also returned false.
         // => Check whether `dest` is still a piping destination.
         if ((state.pipesCount === 1 && state.pipes === dest || state.pipesCount > 1 && indexOf(state.pipes, dest) !== -1) && !cleanedUp) {
-          debug('false write response, pause', src._readableState.awaitDrain);
-          src._readableState.awaitDrain++;
-          increasedAwaitDrain = true;
+          debug('false write response, pause', state.awaitDrain);
+          state.awaitDrain++;
         }
 
         src.pause();
@@ -39499,7 +43523,7 @@ document.getElementById("create-token").onclick = create_token_click;
       debug('onerror', er);
       unpipe();
       dest.removeListener('error', onerror);
-      if (listenerCount$1(dest, 'error') === 0) dest.emit('error', er);
+      if (EElistenerCount(dest, 'error') === 0) errorOrDestroy$2(dest, er);
     } // Make sure our error handler is attached before userland ones.
 
 
@@ -39537,12 +43561,12 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   function pipeOnDrain(src) {
-    return function () {
+    return function pipeOnDrainFunctionResult() {
       var state = src._readableState;
       debug('pipeOnDrain', state.awaitDrain);
       if (state.awaitDrain) state.awaitDrain--;
 
-      if (state.awaitDrain === 0 && src.listeners('data').length) {
+      if (state.awaitDrain === 0 && EElistenerCount(src, 'data')) {
         state.flowing = true;
         flow(src);
       }
@@ -39550,7 +43574,10 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   Readable.prototype.unpipe = function (dest) {
-    var state = this._readableState; // if we're not piping anywhere, then do nothing.
+    var state = this._readableState;
+    var unpipeInfo = {
+      hasUnpiped: false
+    }; // if we're not piping anywhere, then do nothing.
 
     if (state.pipesCount === 0) return this; // just one destination.  most common case.
 
@@ -39562,7 +43589,7 @@ document.getElementById("create-token").onclick = create_token_click;
       state.pipes = null;
       state.pipesCount = 0;
       state.flowing = false;
-      if (dest) dest.emit('unpipe', this);
+      if (dest) dest.emit('unpipe', this, unpipeInfo);
       return this;
     } // slow case. multiple pipe destinations.
 
@@ -39575,42 +43602,48 @@ document.getElementById("create-token").onclick = create_token_click;
       state.pipesCount = 0;
       state.flowing = false;
 
-      for (var _i = 0; _i < len; _i++) {
-        dests[_i].emit('unpipe', this);
+      for (var i = 0; i < len; i++) {
+        dests[i].emit('unpipe', this, {
+          hasUnpiped: false
+        });
       }
 
       return this;
     } // try to find the right one.
 
 
-    var i = indexOf(state.pipes, dest);
-    if (i === -1) return this;
-    state.pipes.splice(i, 1);
+    var index = indexOf(state.pipes, dest);
+    if (index === -1) return this;
+    state.pipes.splice(index, 1);
     state.pipesCount -= 1;
     if (state.pipesCount === 1) state.pipes = state.pipes[0];
-    dest.emit('unpipe', this);
+    dest.emit('unpipe', this, unpipeInfo);
     return this;
   }; // set up data events if they are asked for
   // Ensure readable listeners eventually get something
 
 
   Readable.prototype.on = function (ev, fn) {
-    var res = EventEmitter.prototype.on.call(this, ev, fn);
+    var res = streamBrowser.prototype.on.call(this, ev, fn);
+    var state = this._readableState;
 
     if (ev === 'data') {
-      // Start flowing on next tick if stream isn't explicitly paused
-      if (this._readableState.flowing !== false) this.resume();
-    } else if (ev === 'readable') {
-      var state = this._readableState;
+      // update readableListening so that resume() may be a no-op
+      // a few lines down. This is needed to support once('readable').
+      state.readableListening = this.listenerCount('readable') > 0; // Try start flowing on next tick if stream isn't explicitly paused
 
+      if (state.flowing !== false) this.resume();
+    } else if (ev === 'readable') {
       if (!state.endEmitted && !state.readableListening) {
         state.readableListening = state.needReadable = true;
+        state.flowing = false;
         state.emittedReadable = false;
+        debug('on readable', state.length, state.reading);
 
-        if (!state.reading) {
-          nextTick(nReadingNextTick, this);
-        } else if (state.length) {
+        if (state.length) {
           emitReadable(this);
+        } else if (!state.reading) {
+          nextTick(nReadingNextTick, this);
         }
       }
     }
@@ -39619,6 +43652,51 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Readable.prototype.addListener = Readable.prototype.on;
+
+  Readable.prototype.removeListener = function (ev, fn) {
+    var res = streamBrowser.prototype.removeListener.call(this, ev, fn);
+
+    if (ev === 'readable') {
+      // We need to check if there is someone still listening to
+      // readable and reset the state. However this needs to happen
+      // after readable has been emitted but before I/O (nextTick) to
+      // support once('readable', fn) cycles. This means that calling
+      // resume within the same tick will have no
+      // effect.
+      nextTick(updateReadableListening, this);
+    }
+
+    return res;
+  };
+
+  Readable.prototype.removeAllListeners = function (ev) {
+    var res = streamBrowser.prototype.removeAllListeners.apply(this, arguments);
+
+    if (ev === 'readable' || ev === undefined) {
+      // We need to check if there is someone still listening to
+      // readable and reset the state. However this needs to happen
+      // after readable has been emitted but before I/O (nextTick) to
+      // support once('readable', fn) cycles. This means that calling
+      // resume within the same tick will have no
+      // effect.
+      nextTick(updateReadableListening, this);
+    }
+
+    return res;
+  };
+
+  function updateReadableListening(self) {
+    var state = self._readableState;
+    state.readableListening = self.listenerCount('readable') > 0;
+
+    if (state.resumeScheduled && !state.paused) {
+      // flowing needs to be set to true now, otherwise
+      // the upcoming resume will not flow.
+      state.flowing = true; // crude way to check if we should resume
+    } else if (self.listenerCount('data') > 0) {
+      self.resume();
+    }
+  }
 
   function nReadingNextTick(self) {
     debug('readable nexttick read 0');
@@ -39631,11 +43709,15 @@ document.getElementById("create-token").onclick = create_token_click;
     var state = this._readableState;
 
     if (!state.flowing) {
-      debug('resume');
-      state.flowing = true;
+      debug('resume'); // we flow only if there is no one listening
+      // for readable, but we still have to call
+      // resume()
+
+      state.flowing = !state.readableListening;
       resume(this, state);
     }
 
+    state.paused = false;
     return this;
   };
 
@@ -39647,13 +43729,13 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function resume_(stream, state) {
+    debug('resume', state.reading);
+
     if (!state.reading) {
-      debug('resume read 0');
       stream.read(0);
     }
 
     state.resumeScheduled = false;
-    state.awaitDrain = 0;
     stream.emit('resume');
     flow(stream);
     if (state.flowing && !state.reading) stream.read(0);
@@ -39662,12 +43744,13 @@ document.getElementById("create-token").onclick = create_token_click;
   Readable.prototype.pause = function () {
     debug('call pause flowing=%j', this._readableState.flowing);
 
-    if (false !== this._readableState.flowing) {
+    if (this._readableState.flowing !== false) {
       debug('pause');
       this._readableState.flowing = false;
       this.emit('pause');
     }
 
+    this._readableState.paused = true;
     return this;
   };
 
@@ -39675,32 +43758,35 @@ document.getElementById("create-token").onclick = create_token_click;
     var state = stream._readableState;
     debug('flow', state.flowing);
 
-    while (state.flowing && stream.read() !== null) {}
+    while (state.flowing && stream.read() !== null) {
+    }
   } // wrap an old-style stream as the async data source.
   // This is *not* part of the readable stream interface.
   // It is an ugly unfortunate mess of history.
 
 
   Readable.prototype.wrap = function (stream) {
+    var _this = this;
+
     var state = this._readableState;
     var paused = false;
-    var self = this;
     stream.on('end', function () {
       debug('wrapped end');
 
       if (state.decoder && !state.ended) {
         var chunk = state.decoder.end();
-        if (chunk && chunk.length) self.push(chunk);
+        if (chunk && chunk.length) _this.push(chunk);
       }
 
-      self.push(null);
+      _this.push(null);
     });
     stream.on('data', function (chunk) {
       debug('wrapped data');
       if (state.decoder) chunk = state.decoder.write(chunk); // don't skip over falsy values in objectMode
 
       if (state.objectMode && (chunk === null || chunk === undefined)) return;else if (!state.objectMode && (!chunk || !chunk.length)) return;
-      var ret = self.push(chunk);
+
+      var ret = _this.push(chunk);
 
       if (!ret) {
         paused = true;
@@ -39711,8 +43797,8 @@ document.getElementById("create-token").onclick = create_token_click;
 
     for (var i in stream) {
       if (this[i] === undefined && typeof stream[i] === 'function') {
-        this[i] = function (method) {
-          return function () {
+        this[i] = function methodWrap(method) {
+          return function methodWrapReturnFunction() {
             return stream[method].apply(stream, arguments);
           };
         }(i);
@@ -39720,13 +43806,13 @@ document.getElementById("create-token").onclick = create_token_click;
     } // proxy certain important events.
 
 
-    var events = ['error', 'close', 'destroy', 'pause', 'resume'];
-    forEach(events, function (ev) {
-      stream.on(ev, self.emit.bind(self, ev));
-    }); // when we try to consume some more bytes, simply unpause the
+    for (var n = 0; n < kProxyEvents.length; n++) {
+      stream.on(kProxyEvents[n], this.emit.bind(this, kProxyEvents[n]));
+    } // when we try to consume some more bytes, simply unpause the
     // underlying stream.
 
-    self._read = function (n) {
+
+    this._read = function (n) {
       debug('wrapped _read', n);
 
       if (paused) {
@@ -39735,11 +43821,62 @@ document.getElementById("create-token").onclick = create_token_click;
       }
     };
 
-    return self;
-  }; // exposed for testing purposes only.
+    return this;
+  };
 
+  if (typeof Symbol === 'function') {
+    Readable.prototype[Symbol.asyncIterator] = function () {
+      if (createReadableStreamAsyncIterator$1 === undefined) {
+        createReadableStreamAsyncIterator$1 = async_iterator;
+      }
 
-  Readable._fromList = fromList; // Pluck off n bytes from an array of buffers.
+      return createReadableStreamAsyncIterator$1(this);
+    };
+  }
+
+  Object.defineProperty(Readable.prototype, 'readableHighWaterMark', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._readableState.highWaterMark;
+    }
+  });
+  Object.defineProperty(Readable.prototype, 'readableBuffer', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._readableState && this._readableState.buffer;
+    }
+  });
+  Object.defineProperty(Readable.prototype, 'readableFlowing', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._readableState.flowing;
+    },
+    set: function set(state) {
+      if (this._readableState) {
+        this._readableState.flowing = state;
+      }
+    }
+  }); // exposed for testing purposes only.
+
+  Readable._fromList = fromList;
+  Object.defineProperty(Readable.prototype, 'readableLength', {
+    // making it explicit this property is not enumerable
+    // because otherwise some prototype manipulation in
+    // userland will fail
+    enumerable: false,
+    get: function get() {
+      return this._readableState.length;
+    }
+  }); // Pluck off n bytes from an array of buffers.
   // Length is the combined lengths of all the buffers in the list.
   // This function is designed to be inlinable, so please take care when making
   // changes to the function body.
@@ -39750,111 +43887,18 @@ document.getElementById("create-token").onclick = create_token_click;
     var ret;
     if (state.objectMode) ret = state.buffer.shift();else if (!n || n >= state.length) {
       // read it all, truncate the list
-      if (state.decoder) ret = state.buffer.join('');else if (state.buffer.length === 1) ret = state.buffer.head.data;else ret = state.buffer.concat(state.length);
+      if (state.decoder) ret = state.buffer.join('');else if (state.buffer.length === 1) ret = state.buffer.first();else ret = state.buffer.concat(state.length);
       state.buffer.clear();
     } else {
       // read part of list
-      ret = fromListPartial(n, state.buffer, state.decoder);
+      ret = state.buffer.consume(n, state.decoder);
     }
-    return ret;
-  } // Extracts only enough buffered data to satisfy the amount requested.
-  // This function is designed to be inlinable, so please take care when making
-  // changes to the function body.
-
-
-  function fromListPartial(n, list, hasStrings) {
-    var ret;
-
-    if (n < list.head.data.length) {
-      // slice is the same for buffers and strings
-      ret = list.head.data.slice(0, n);
-      list.head.data = list.head.data.slice(n);
-    } else if (n === list.head.data.length) {
-      // first chunk is a perfect match
-      ret = list.shift();
-    } else {
-      // result spans more than one buffer
-      ret = hasStrings ? copyFromBufferString(n, list) : copyFromBuffer(n, list);
-    }
-
-    return ret;
-  } // Copies a specified amount of characters from the list of buffered data
-  // chunks.
-  // This function is designed to be inlinable, so please take care when making
-  // changes to the function body.
-
-
-  function copyFromBufferString(n, list) {
-    var p = list.head;
-    var c = 1;
-    var ret = p.data;
-    n -= ret.length;
-
-    while (p = p.next) {
-      var str = p.data;
-      var nb = n > str.length ? str.length : n;
-      if (nb === str.length) ret += str;else ret += str.slice(0, n);
-      n -= nb;
-
-      if (n === 0) {
-        if (nb === str.length) {
-          ++c;
-          if (p.next) list.head = p.next;else list.head = list.tail = null;
-        } else {
-          list.head = p;
-          p.data = str.slice(nb);
-        }
-
-        break;
-      }
-
-      ++c;
-    }
-
-    list.length -= c;
-    return ret;
-  } // Copies a specified amount of bytes from the list of buffered data chunks.
-  // This function is designed to be inlinable, so please take care when making
-  // changes to the function body.
-
-
-  function copyFromBuffer(n, list) {
-    var ret = Buffer$1.allocUnsafe(n);
-    var p = list.head;
-    var c = 1;
-    p.data.copy(ret);
-    n -= p.data.length;
-
-    while (p = p.next) {
-      var buf = p.data;
-      var nb = n > buf.length ? buf.length : n;
-      buf.copy(ret, ret.length - n, 0, nb);
-      n -= nb;
-
-      if (n === 0) {
-        if (nb === buf.length) {
-          ++c;
-          if (p.next) list.head = p.next;else list.head = list.tail = null;
-        } else {
-          list.head = p;
-          p.data = buf.slice(nb);
-        }
-
-        break;
-      }
-
-      ++c;
-    }
-
-    list.length -= c;
     return ret;
   }
 
   function endReadable(stream) {
-    var state = stream._readableState; // If we get here before consuming all the bytes, then that is a
-    // bug in node.  Should never happen.
-
-    if (state.length > 0) throw new Error('"endReadable()" called on non-empty stream');
+    var state = stream._readableState;
+    debug('endReadable', state.endEmitted);
 
     if (!state.endEmitted) {
       state.ended = true;
@@ -39863,18 +43907,33 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function endReadableNT(state, stream) {
-    // Check that we didn't get one last unshift.
+    debug('endReadableNT', state.endEmitted, state.length); // Check that we didn't get one last unshift.
+
     if (!state.endEmitted && state.length === 0) {
       state.endEmitted = true;
       stream.readable = false;
       stream.emit('end');
+
+      if (state.autoDestroy) {
+        // In case of duplex streams we need a way to detect
+        // if the writable side is ready for autoDestroy as well
+        var wState = stream._writableState;
+
+        if (!wState || wState.autoDestroy && wState.finished) {
+          stream.destroy();
+        }
+      }
     }
   }
 
-  function forEach(xs, f) {
-    for (var i = 0, l = xs.length; i < l; i++) {
-      f(xs[i], i);
-    }
+  if (typeof Symbol === 'function') {
+    Readable.from = function (iterable, opts) {
+      if (from$1 === undefined) {
+        from$1 = fromBrowser;
+      }
+
+      return from$1(Readable, iterable, opts);
+    };
   }
 
   function indexOf(xs, x) {
@@ -39885,522 +43944,47 @@ document.getElementById("create-token").onclick = create_token_click;
     return -1;
   }
 
-  // A bit simpler than readable streams.
-  Writable.WritableState = WritableState;
-  inherits$2(Writable, EventEmitter);
-
-  function nop() {}
-
-  function WriteReq(chunk, encoding, cb) {
-    this.chunk = chunk;
-    this.encoding = encoding;
-    this.callback = cb;
-    this.next = null;
-  }
-
-  function WritableState(options, stream) {
-    Object.defineProperty(this, 'buffer', {
-      get: deprecate(function () {
-        return this.getBuffer();
-      }, '_writableState.buffer is deprecated. Use _writableState.getBuffer ' + 'instead.')
-    });
-    options = options || {}; // object stream flag to indicate whether or not this stream
-    // contains buffers or objects.
-
-    this.objectMode = !!options.objectMode;
-    if (stream instanceof Duplex) this.objectMode = this.objectMode || !!options.writableObjectMode; // the point at which write() starts returning false
-    // Note: 0 is a valid value, means that we always return false if
-    // the entire buffer is not flushed immediately on write()
-
-    var hwm = options.highWaterMark;
-    var defaultHwm = this.objectMode ? 16 : 16 * 1024;
-    this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm; // cast to ints.
-
-    this.highWaterMark = ~~this.highWaterMark;
-    this.needDrain = false; // at the start of calling end()
-
-    this.ending = false; // when end() has been called, and returned
-
-    this.ended = false; // when 'finish' is emitted
-
-    this.finished = false; // should we decode strings into buffers before passing to _write?
-    // this is here so that some node-core streams can optimize string
-    // handling at a lower level.
-
-    var noDecode = options.decodeStrings === false;
-    this.decodeStrings = !noDecode; // Crypto is kind of old and crusty.  Historically, its default string
-    // encoding is 'binary' so we have to make this configurable.
-    // Everything else in the universe uses 'utf8', though.
-
-    this.defaultEncoding = options.defaultEncoding || 'utf8'; // not an actual buffer we keep track of, but a measurement
-    // of how much we're waiting to get pushed to some underlying
-    // socket or file.
-
-    this.length = 0; // a flag to see when we're in the middle of a write.
-
-    this.writing = false; // when true all writes will be buffered until .uncork() call
-
-    this.corked = 0; // a flag to be able to tell if the onwrite cb is called immediately,
-    // or on a later tick.  We set this to true at first, because any
-    // actions that shouldn't happen until "later" should generally also
-    // not happen before the first write call.
-
-    this.sync = true; // a flag to know if we're processing previously buffered items, which
-    // may call the _write() callback in the same tick, so that we don't
-    // end up in an overlapped onwrite situation.
-
-    this.bufferProcessing = false; // the callback that's passed to _write(chunk,cb)
-
-    this.onwrite = function (er) {
-      onwrite(stream, er);
-    }; // the callback that the user supplies to write(chunk,encoding,cb)
-
-
-    this.writecb = null; // the amount that is being written when _write is called.
-
-    this.writelen = 0;
-    this.bufferedRequest = null;
-    this.lastBufferedRequest = null; // number of pending user-supplied write callbacks
-    // this must be 0 before 'finish' can be emitted
-
-    this.pendingcb = 0; // emit prefinish if the only thing we're waiting for is _write cbs
-    // This is relevant for synchronous Transform streams
-
-    this.prefinished = false; // True if the error was already emitted and should not be thrown again
-
-    this.errorEmitted = false; // count buffered requests
-
-    this.bufferedRequestCount = 0; // allocate the first CorkedRequest, there is always
-    // one allocated and free to use, and we maintain at most two
-
-    this.corkedRequestsFree = new CorkedRequest(this);
-  }
-
-  WritableState.prototype.getBuffer = function writableStateGetBuffer() {
-    var current = this.bufferedRequest;
-    var out = [];
-
-    while (current) {
-      out.push(current);
-      current = current.next;
-    }
-
-    return out;
-  };
-  function Writable(options) {
-    // Writable ctor is applied to Duplexes, though they're not
-    // instanceof Writable, they're instanceof Readable.
-    if (!(this instanceof Writable) && !(this instanceof Duplex)) return new Writable(options);
-    this._writableState = new WritableState(options, this); // legacy.
-
-    this.writable = true;
-
-    if (options) {
-      if (typeof options.write === 'function') this._write = options.write;
-      if (typeof options.writev === 'function') this._writev = options.writev;
-    }
-
-    EventEmitter.call(this);
-  } // Otherwise people can pipe Writable streams, which is just wrong.
-
-  Writable.prototype.pipe = function () {
-    this.emit('error', new Error('Cannot pipe, not readable'));
-  };
-
-  function writeAfterEnd(stream, cb) {
-    var er = new Error('write after end'); // TODO: defer error events consistently everywhere, not just the cb
-
-    stream.emit('error', er);
-    nextTick(cb, er);
-  } // If we get something that is not a buffer, string, null, or undefined,
-  // and we're not in objectMode, then that's an error.
-  // Otherwise stream chunks are all considered to be of length=1, and the
-  // watermarks determine how many objects to keep in the buffer, rather than
-  // how many bytes or characters.
-
-
-  function validChunk(stream, state, chunk, cb) {
-    var valid = true;
-    var er = false; // Always throw error if a null is written
-    // if we are not in object mode then throw
-    // if it is not a buffer, string, or undefined.
-
-    if (chunk === null) {
-      er = new TypeError('May not write null values to stream');
-    } else if (!Buffer$1.isBuffer(chunk) && typeof chunk !== 'string' && chunk !== undefined && !state.objectMode) {
-      er = new TypeError('Invalid non-string/buffer chunk');
-    }
-
-    if (er) {
-      stream.emit('error', er);
-      nextTick(cb, er);
-      valid = false;
-    }
-
-    return valid;
-  }
-
-  Writable.prototype.write = function (chunk, encoding, cb) {
-    var state = this._writableState;
-    var ret = false;
-
-    if (typeof encoding === 'function') {
-      cb = encoding;
-      encoding = null;
-    }
-
-    if (Buffer$1.isBuffer(chunk)) encoding = 'buffer';else if (!encoding) encoding = state.defaultEncoding;
-    if (typeof cb !== 'function') cb = nop;
-    if (state.ended) writeAfterEnd(this, cb);else if (validChunk(this, state, chunk, cb)) {
-      state.pendingcb++;
-      ret = writeOrBuffer(this, state, chunk, encoding, cb);
-    }
-    return ret;
-  };
-
-  Writable.prototype.cork = function () {
-    var state = this._writableState;
-    state.corked++;
-  };
-
-  Writable.prototype.uncork = function () {
-    var state = this._writableState;
-
-    if (state.corked) {
-      state.corked--;
-      if (!state.writing && !state.corked && !state.finished && !state.bufferProcessing && state.bufferedRequest) clearBuffer(this, state);
-    }
-  };
-
-  Writable.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
-    // node::ParseEncoding() requires lower case.
-    if (typeof encoding === 'string') encoding = encoding.toLowerCase();
-    if (!(['hex', 'utf8', 'utf-8', 'ascii', 'binary', 'base64', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le', 'raw'].indexOf((encoding + '').toLowerCase()) > -1)) throw new TypeError('Unknown encoding: ' + encoding);
-    this._writableState.defaultEncoding = encoding;
-    return this;
-  };
-
-  function decodeChunk(state, chunk, encoding) {
-    if (!state.objectMode && state.decodeStrings !== false && typeof chunk === 'string') {
-      chunk = Buffer$1.from(chunk, encoding);
-    }
-
-    return chunk;
-  } // if we're already writing something, then just put this
-  // in the queue, and wait our turn.  Otherwise, call _write
-  // If we return false, then we need a drain event, so set that flag.
-
-
-  function writeOrBuffer(stream, state, chunk, encoding, cb) {
-    chunk = decodeChunk(state, chunk, encoding);
-    if (Buffer$1.isBuffer(chunk)) encoding = 'buffer';
-    var len = state.objectMode ? 1 : chunk.length;
-    state.length += len;
-    var ret = state.length < state.highWaterMark; // we must ensure that previous needDrain will not be reset to false.
-
-    if (!ret) state.needDrain = true;
-
-    if (state.writing || state.corked) {
-      var last = state.lastBufferedRequest;
-      state.lastBufferedRequest = new WriteReq(chunk, encoding, cb);
-
-      if (last) {
-        last.next = state.lastBufferedRequest;
-      } else {
-        state.bufferedRequest = state.lastBufferedRequest;
-      }
-
-      state.bufferedRequestCount += 1;
-    } else {
-      doWrite(stream, state, false, len, chunk, encoding, cb);
-    }
-
-    return ret;
-  }
-
-  function doWrite(stream, state, writev, len, chunk, encoding, cb) {
-    state.writelen = len;
-    state.writecb = cb;
-    state.writing = true;
-    state.sync = true;
-    if (writev) stream._writev(chunk, state.onwrite);else stream._write(chunk, encoding, state.onwrite);
-    state.sync = false;
-  }
-
-  function onwriteError(stream, state, sync, er, cb) {
-    --state.pendingcb;
-    if (sync) nextTick(cb, er);else cb(er);
-    stream._writableState.errorEmitted = true;
-    stream.emit('error', er);
-  }
-
-  function onwriteStateUpdate(state) {
-    state.writing = false;
-    state.writecb = null;
-    state.length -= state.writelen;
-    state.writelen = 0;
-  }
-
-  function onwrite(stream, er) {
-    var state = stream._writableState;
-    var sync = state.sync;
-    var cb = state.writecb;
-    onwriteStateUpdate(state);
-    if (er) onwriteError(stream, state, sync, er, cb);else {
-      // Check if we're actually ready to finish, but don't emit yet
-      var finished = needFinish(state);
-
-      if (!finished && !state.corked && !state.bufferProcessing && state.bufferedRequest) {
-        clearBuffer(stream, state);
-      }
-
-      if (sync) {
-        /*<replacement>*/
-        nextTick(afterWrite, stream, state, finished, cb);
-        /*</replacement>*/
-      } else {
-        afterWrite(stream, state, finished, cb);
-      }
-    }
-  }
-
-  function afterWrite(stream, state, finished, cb) {
-    if (!finished) onwriteDrain(stream, state);
-    state.pendingcb--;
-    cb();
-    finishMaybe(stream, state);
-  } // Must force callback to be called on nextTick, so that we don't
-  // emit 'drain' before the write() consumer gets the 'false' return
-  // value, and has a chance to attach a 'drain' listener.
-
-
-  function onwriteDrain(stream, state) {
-    if (state.length === 0 && state.needDrain) {
-      state.needDrain = false;
-      stream.emit('drain');
-    }
-  } // if there's something in the buffer waiting, then process it
-
-
-  function clearBuffer(stream, state) {
-    state.bufferProcessing = true;
-    var entry = state.bufferedRequest;
-
-    if (stream._writev && entry && entry.next) {
-      // Fast case, write everything using _writev()
-      var l = state.bufferedRequestCount;
-      var buffer = new Array(l);
-      var holder = state.corkedRequestsFree;
-      holder.entry = entry;
-      var count = 0;
-
-      while (entry) {
-        buffer[count] = entry;
-        entry = entry.next;
-        count += 1;
-      }
-
-      doWrite(stream, state, true, state.length, buffer, '', holder.finish); // doWrite is almost always async, defer these to save a bit of time
-      // as the hot path ends with doWrite
-
-      state.pendingcb++;
-      state.lastBufferedRequest = null;
-
-      if (holder.next) {
-        state.corkedRequestsFree = holder.next;
-        holder.next = null;
-      } else {
-        state.corkedRequestsFree = new CorkedRequest(state);
-      }
-    } else {
-      // Slow case, write chunks one-by-one
-      while (entry) {
-        var chunk = entry.chunk;
-        var encoding = entry.encoding;
-        var cb = entry.callback;
-        var len = state.objectMode ? 1 : chunk.length;
-        doWrite(stream, state, false, len, chunk, encoding, cb);
-        entry = entry.next; // if we didn't call the onwrite immediately, then
-        // it means that we need to wait until it does.
-        // also, that means that the chunk and cb are currently
-        // being processed, so move the buffer counter past them.
-
-        if (state.writing) {
-          break;
-        }
-      }
-
-      if (entry === null) state.lastBufferedRequest = null;
-    }
-
-    state.bufferedRequestCount = 0;
-    state.bufferedRequest = entry;
-    state.bufferProcessing = false;
-  }
-
-  Writable.prototype._write = function (chunk, encoding, cb) {
-    cb(new Error('not implemented'));
-  };
-
-  Writable.prototype._writev = null;
-
-  Writable.prototype.end = function (chunk, encoding, cb) {
-    var state = this._writableState;
-
-    if (typeof chunk === 'function') {
-      cb = chunk;
-      chunk = null;
-      encoding = null;
-    } else if (typeof encoding === 'function') {
-      cb = encoding;
-      encoding = null;
-    }
-
-    if (chunk !== null && chunk !== undefined) this.write(chunk, encoding); // .end() fully uncorks
-
-    if (state.corked) {
-      state.corked = 1;
-      this.uncork();
-    } // ignore unnecessary end() calls.
-
-
-    if (!state.ending && !state.finished) endWritable(this, state, cb);
-  };
-
-  function needFinish(state) {
-    return state.ending && state.length === 0 && state.bufferedRequest === null && !state.finished && !state.writing;
-  }
-
-  function prefinish(stream, state) {
-    if (!state.prefinished) {
-      state.prefinished = true;
-      stream.emit('prefinish');
-    }
-  }
-
-  function finishMaybe(stream, state) {
-    var need = needFinish(state);
-
-    if (need) {
-      if (state.pendingcb === 0) {
-        prefinish(stream, state);
-        state.finished = true;
-        stream.emit('finish');
-      } else {
-        prefinish(stream, state);
-      }
-    }
-
-    return need;
-  }
-
-  function endWritable(stream, state, cb) {
-    state.ending = true;
-    finishMaybe(stream, state);
-
-    if (cb) {
-      if (state.finished) nextTick(cb);else stream.once('finish', cb);
-    }
-
-    state.ended = true;
-    stream.writable = false;
-  } // It seems a linked list but it is not
-  // there will be only 2 of these for each stream
-
-
-  function CorkedRequest(state) {
-    var _this = this;
-
-    this.next = null;
-    this.entry = null;
-
-    this.finish = function (err) {
-      var entry = _this.entry;
-      _this.entry = null;
-
-      while (entry) {
-        var cb = entry.callback;
-        state.pendingcb--;
-        cb(err);
-        entry = entry.next;
-      }
-
-      if (state.corkedRequestsFree) {
-        state.corkedRequestsFree.next = _this;
-      } else {
-        state.corkedRequestsFree = _this;
-      }
-    };
-  }
-
-  inherits$2(Duplex, Readable);
-  var keys = Object.keys(Writable.prototype);
-
-  for (var v = 0; v < keys.length; v++) {
-    var method = keys[v];
-    if (!Duplex.prototype[method]) Duplex.prototype[method] = Writable.prototype[method];
-  }
-  function Duplex(options) {
-    if (!(this instanceof Duplex)) return new Duplex(options);
-    Readable.call(this, options);
-    Writable.call(this, options);
-    if (options && options.readable === false) this.readable = false;
-    if (options && options.writable === false) this.writable = false;
-    this.allowHalfOpen = true;
-    if (options && options.allowHalfOpen === false) this.allowHalfOpen = false;
-    this.once('end', onend);
-  } // the no-half-open enforcer
-
-  function onend() {
-    // if we allow half-open state, or if the writable side ended,
-    // then we're ok.
-    if (this.allowHalfOpen || this._writableState.ended) return; // no more data can be written.
-    // But allow more writes to happen in this tick.
-
-    nextTick(onEndNT, this);
-  }
-
-  function onEndNT(self) {
-    self.end();
-  }
-
-  // a transform stream is a readable/writable stream where you do
-  inherits$2(Transform, Duplex);
-
-  function TransformState(stream) {
-    this.afterTransform = function (er, data) {
-      return afterTransform(stream, er, data);
-    };
-
-    this.needTransform = false;
-    this.transforming = false;
-    this.writecb = null;
-    this.writechunk = null;
-    this.writeencoding = null;
-  }
-
-  function afterTransform(stream, er, data) {
-    var ts = stream._transformState;
+  var _stream_transform = Transform;
+  var _require$codes$2 = errorsBrowser.codes,
+      ERR_METHOD_NOT_IMPLEMENTED$2 = _require$codes$2.ERR_METHOD_NOT_IMPLEMENTED,
+      ERR_MULTIPLE_CALLBACK$1 = _require$codes$2.ERR_MULTIPLE_CALLBACK,
+      ERR_TRANSFORM_ALREADY_TRANSFORMING = _require$codes$2.ERR_TRANSFORM_ALREADY_TRANSFORMING,
+      ERR_TRANSFORM_WITH_LENGTH_0 = _require$codes$2.ERR_TRANSFORM_WITH_LENGTH_0;
+  inherits_browser(Transform, _stream_duplex);
+
+  function afterTransform(er, data) {
+    var ts = this._transformState;
     ts.transforming = false;
     var cb = ts.writecb;
-    if (!cb) return stream.emit('error', new Error('no writecb in Transform class'));
+
+    if (cb === null) {
+      return this.emit('error', new ERR_MULTIPLE_CALLBACK$1());
+    }
+
     ts.writechunk = null;
     ts.writecb = null;
-    if (data !== null && data !== undefined) stream.push(data);
+    if (data != null) // single equals check for both `null` and `undefined`
+      this.push(data);
     cb(er);
-    var rs = stream._readableState;
+    var rs = this._readableState;
     rs.reading = false;
 
     if (rs.needReadable || rs.length < rs.highWaterMark) {
-      stream._read(rs.highWaterMark);
+      this._read(rs.highWaterMark);
     }
   }
+
   function Transform(options) {
     if (!(this instanceof Transform)) return new Transform(options);
-    Duplex.call(this, options);
-    this._transformState = new TransformState(this); // when the writable side finishes, then flush out anything remaining.
-
-    var stream = this; // start out asking for a readable event once data is transformed.
+    _stream_duplex.call(this, options);
+    this._transformState = {
+      afterTransform: afterTransform.bind(this),
+      needTransform: false,
+      transforming: false,
+      writecb: null,
+      writechunk: null,
+      writeencoding: null
+    }; // start out asking for a readable event once data is transformed.
 
     this._readableState.needReadable = true; // we have implemented the _read method, and done the other things
     // that Readable wants before the first _read call, so unset the
@@ -40411,18 +43995,27 @@ document.getElementById("create-token").onclick = create_token_click;
     if (options) {
       if (typeof options.transform === 'function') this._transform = options.transform;
       if (typeof options.flush === 'function') this._flush = options.flush;
-    }
+    } // When the writable side finishes, then flush out anything remaining.
 
-    this.once('prefinish', function () {
-      if (typeof this._flush === 'function') this._flush(function (er) {
-        done(stream, er);
-      });else done(stream);
-    });
+
+    this.on('prefinish', prefinish$1);
+  }
+
+  function prefinish$1() {
+    var _this = this;
+
+    if (typeof this._flush === 'function' && !this._readableState.destroyed) {
+      this._flush(function (er, data) {
+        done(_this, er, data);
+      });
+    } else {
+      done(this, null, null);
+    }
   }
 
   Transform.prototype.push = function (chunk, encoding) {
     this._transformState.needTransform = false;
-    return Duplex.prototype.push.call(this, chunk, encoding);
+    return _stream_duplex.prototype.push.call(this, chunk, encoding);
   }; // This is the part where you do stuff!
   // override this function in implementation classes.
   // 'chunk' is an input chunk.
@@ -40436,7 +44029,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
 
   Transform.prototype._transform = function (chunk, encoding, cb) {
-    throw new Error('Not implemented');
+    cb(new ERR_METHOD_NOT_IMPLEMENTED$2('_transform()'));
   };
 
   Transform.prototype._write = function (chunk, encoding, cb) {
@@ -40457,7 +44050,7 @@ document.getElementById("create-token").onclick = create_token_click;
   Transform.prototype._read = function (n) {
     var ts = this._transformState;
 
-    if (ts.writechunk !== null && ts.writecb && !ts.transforming) {
+    if (ts.writechunk !== null && !ts.transforming) {
       ts.transforming = true;
 
       this._transform(ts.writechunk, ts.writeencoding, ts.afterTransform);
@@ -40468,126 +44061,162 @@ document.getElementById("create-token").onclick = create_token_click;
     }
   };
 
-  function done(stream, er) {
-    if (er) return stream.emit('error', er); // if there's nothing in the write buffer, then that means
+  Transform.prototype._destroy = function (err, cb) {
+    _stream_duplex.prototype._destroy.call(this, err, function (err2) {
+      cb(err2);
+    });
+  };
+
+  function done(stream, er, data) {
+    if (er) return stream.emit('error', er);
+    if (data != null) // single equals check for both `null` and `undefined`
+      stream.push(data); // TODO(BridgeAR): Write a test for these two error cases
+    // if there's nothing in the write buffer, then that means
     // that nothing more will ever be provided
 
-    var ws = stream._writableState;
-    var ts = stream._transformState;
-    if (ws.length) throw new Error('Calling transform done when ws.length != 0');
-    if (ts.transforming) throw new Error('Calling transform done when still transforming');
+    if (stream._writableState.length) throw new ERR_TRANSFORM_WITH_LENGTH_0();
+    if (stream._transformState.transforming) throw new ERR_TRANSFORM_ALREADY_TRANSFORMING();
     return stream.push(null);
   }
 
-  inherits$2(PassThrough, Transform);
+  var _stream_passthrough = PassThrough;
+  inherits_browser(PassThrough, _stream_transform);
+
   function PassThrough(options) {
     if (!(this instanceof PassThrough)) return new PassThrough(options);
-    Transform.call(this, options);
+    _stream_transform.call(this, options);
   }
 
   PassThrough.prototype._transform = function (chunk, encoding, cb) {
     cb(null, chunk);
   };
 
-  inherits$2(Stream, EventEmitter);
-  Stream.Readable = Readable;
-  Stream.Writable = Writable;
-  Stream.Duplex = Duplex;
-  Stream.Transform = Transform;
-  Stream.PassThrough = PassThrough; // Backwards-compat with node 0.4.x
+  var eos$1;
 
-  Stream.Stream = Stream;
-  // part of this class) is overridden in the Readable class.
-
-  function Stream() {
-    EventEmitter.call(this);
+  function once$2(callback) {
+    var called = false;
+    return function () {
+      if (called) return;
+      called = true;
+      callback.apply(void 0, arguments);
+    };
   }
 
-  Stream.prototype.pipe = function (dest, options) {
-    var source = this;
+  var _require$codes$3 = errorsBrowser.codes,
+      ERR_MISSING_ARGS = _require$codes$3.ERR_MISSING_ARGS,
+      ERR_STREAM_DESTROYED$1 = _require$codes$3.ERR_STREAM_DESTROYED;
 
-    function ondata(chunk) {
-      if (dest.writable) {
-        if (false === dest.write(chunk) && source.pause) {
-          source.pause();
-        }
-      }
+  function noop$2(err) {
+    // Rethrow the error if it exists to avoid swallowing it
+    if (err) throw err;
+  }
+
+  function isRequest$1(stream) {
+    return stream.setHeader && typeof stream.abort === 'function';
+  }
+
+  function destroyer(stream, reading, writing, callback) {
+    callback = once$2(callback);
+    var closed = false;
+    stream.on('close', function () {
+      closed = true;
+    });
+    if (eos$1 === undefined) eos$1 = endOfStream;
+    eos$1(stream, {
+      readable: reading,
+      writable: writing
+    }, function (err) {
+      if (err) return callback(err);
+      closed = true;
+      callback();
+    });
+    var destroyed = false;
+    return function (err) {
+      if (closed) return;
+      if (destroyed) return;
+      destroyed = true; // request.destroy just do .end - .abort is what we want
+
+      if (isRequest$1(stream)) return stream.abort();
+      if (typeof stream.destroy === 'function') return stream.destroy();
+      callback(err || new ERR_STREAM_DESTROYED$1('pipe'));
+    };
+  }
+
+  function call(fn) {
+    fn();
+  }
+
+  function pipe(from, to) {
+    return from.pipe(to);
+  }
+
+  function popCallback(streams) {
+    if (!streams.length) return noop$2;
+    if (typeof streams[streams.length - 1] !== 'function') return noop$2;
+    return streams.pop();
+  }
+
+  function pipeline() {
+    for (var _len = arguments.length, streams = new Array(_len), _key = 0; _key < _len; _key++) {
+      streams[_key] = arguments[_key];
     }
 
-    source.on('data', ondata);
+    var callback = popCallback(streams);
+    if (Array.isArray(streams[0])) streams = streams[0];
 
-    function ondrain() {
-      if (source.readable && source.resume) {
-        source.resume();
-      }
+    if (streams.length < 2) {
+      throw new ERR_MISSING_ARGS('streams');
     }
 
-    dest.on('drain', ondrain); // If the 'end' option is not supplied, dest.end() will be called when
-    // source gets the 'end' or 'close' events.  Only dest.end() once.
+    var error;
+    var destroys = streams.map(function (stream, i) {
+      var reading = i < streams.length - 1;
+      var writing = i > 0;
+      return destroyer(stream, reading, writing, function (err) {
+        if (!error) error = err;
+        if (err) destroys.forEach(call);
+        if (reading) return;
+        destroys.forEach(call);
+        callback(error);
+      });
+    });
+    return streams.reduce(pipe);
+  }
 
-    if (!dest._isStdio && (!options || options.end !== false)) {
-      source.on('end', onend);
-      source.on('close', onclose);
-    }
+  var pipeline_1 = pipeline;
 
-    var didOnEnd = false;
+  var readableBrowser = createCommonjsModule(function (module, exports) {
+    exports = module.exports = _stream_readable;
+    exports.Stream = exports;
+    exports.Readable = exports;
+    exports.Writable = _stream_writable;
+    exports.Duplex = _stream_duplex;
+    exports.Transform = _stream_transform;
+    exports.PassThrough = _stream_passthrough;
+    exports.finished = endOfStream;
+    exports.pipeline = pipeline_1;
+  });
+  var readableBrowser_1 = readableBrowser.Stream;
+  var readableBrowser_2 = readableBrowser.Readable;
+  var readableBrowser_3 = readableBrowser.Writable;
+  var readableBrowser_4 = readableBrowser.Duplex;
+  var readableBrowser_5 = readableBrowser.Transform;
+  var readableBrowser_6 = readableBrowser.PassThrough;
+  var readableBrowser_7 = readableBrowser.finished;
+  var readableBrowser_8 = readableBrowser.pipeline;
 
-    function onend() {
-      if (didOnEnd) return;
-      didOnEnd = true;
-      dest.end();
-    }
-
-    function onclose() {
-      if (didOnEnd) return;
-      didOnEnd = true;
-      if (typeof dest.destroy === 'function') dest.destroy();
-    } // don't leave dangling pipes when there are errors.
-
-
-    function onerror(er) {
-      cleanup();
-
-      if (EventEmitter.listenerCount(this, 'error') === 0) {
-        throw er; // Unhandled stream error in pipe.
-      }
-    }
-
-    source.on('error', onerror);
-    dest.on('error', onerror); // remove all the event listeners that were added.
-
-    function cleanup() {
-      source.removeListener('data', ondata);
-      dest.removeListener('drain', ondrain);
-      source.removeListener('end', onend);
-      source.removeListener('close', onclose);
-      source.removeListener('error', onerror);
-      dest.removeListener('error', onerror);
-      source.removeListener('end', cleanup);
-      source.removeListener('close', cleanup);
-      dest.removeListener('close', cleanup);
-    }
-
-    source.on('end', cleanup);
-    source.on('close', cleanup);
-    dest.on('close', cleanup);
-    dest.emit('pipe', source); // Allow for unix-like usage: A.pipe(B).pipe(C)
-
-    return dest;
-  };
-
-  var Buffer$2 = safeBuffer.Buffer;
-  var Transform$1 = Stream.Transform;
+  var Buffer$6 = safeBuffer.Buffer;
+  var Transform$1 = readableBrowser.Transform;
 
   function throwIfNotStringOrBuffer(val, prefix) {
-    if (!Buffer$2.isBuffer(val) && typeof val !== 'string') {
+    if (!Buffer$6.isBuffer(val) && typeof val !== 'string') {
       throw new TypeError(prefix + ' must be a string or a buffer');
     }
   }
 
   function HashBase(blockSize) {
     Transform$1.call(this);
-    this._block = Buffer$2.allocUnsafe(blockSize);
+    this._block = Buffer$6.allocUnsafe(blockSize);
     this._blockSize = blockSize;
     this._blockOffset = 0;
     this._length = [0, 0, 0, 0];
@@ -40623,7 +44252,7 @@ document.getElementById("create-token").onclick = create_token_click;
   HashBase.prototype.update = function (data, encoding) {
     throwIfNotStringOrBuffer(data, 'Data');
     if (this._finalized) throw new Error('Digest already called');
-    if (!Buffer$2.isBuffer(data)) data = Buffer$2.from(data, encoding); // consume data
+    if (!Buffer$6.isBuffer(data)) data = Buffer$6.from(data, encoding); // consume data
 
     var block = this._block;
     var offset = 0;
@@ -40681,7 +44310,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
   var hashBase = HashBase;
 
-  var Buffer$3 = safeBuffer.Buffer;
+  var Buffer$7 = safeBuffer.Buffer;
   var ARRAY16 = new Array(16);
 
   function MD5() {
@@ -40797,7 +44426,7 @@ document.getElementById("create-token").onclick = create_token_click;
     this._update(); // produce result
 
 
-    var buffer = Buffer$3.allocUnsafe(16);
+    var buffer = Buffer$7.allocUnsafe(16);
     buffer.writeInt32LE(this._a, 0);
     buffer.writeInt32LE(this._b, 4);
     buffer.writeInt32LE(this._c, 8);
@@ -40827,7 +44456,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
   var md5_js = MD5;
 
-  var Buffer$4 = bufferEs6.Buffer;
+  var Buffer$8 = bufferEs6.Buffer;
   var ARRAY16$1 = new Array(16);
   var zl = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3, 10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2, 4, 0, 5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13];
   var zr = [5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15, 5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14, 12, 15, 10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11];
@@ -40930,7 +44559,7 @@ document.getElementById("create-token").onclick = create_token_click;
     this._update(); // produce result
 
 
-    var buffer = Buffer$4.alloc ? Buffer$4.alloc(20) : new Buffer$4(20);
+    var buffer = Buffer$8.alloc ? Buffer$8.alloc(20) : new Buffer$8(20);
     buffer.writeInt32LE(this._a, 0);
     buffer.writeInt32LE(this._b, 4);
     buffer.writeInt32LE(this._c, 8);
@@ -40965,10 +44594,10 @@ document.getElementById("create-token").onclick = create_token_click;
 
   var ripemd160 = RIPEMD160;
 
-  var Buffer$5 = safeBuffer.Buffer; // prototype class for hash functions
+  var Buffer$9 = safeBuffer.Buffer; // prototype class for hash functions
 
   function Hash(blockSize, finalSize) {
-    this._block = Buffer$5.alloc(blockSize);
+    this._block = Buffer$9.alloc(blockSize);
     this._finalSize = finalSize;
     this._blockSize = blockSize;
     this._len = 0;
@@ -40977,7 +44606,7 @@ document.getElementById("create-token").onclick = create_token_click;
   Hash.prototype.update = function (data, enc) {
     if (typeof data === 'string') {
       enc = enc || 'utf8';
-      data = Buffer$5.from(data, enc);
+      data = Buffer$9.from(data, enc);
     }
 
     var block = this._block;
@@ -41053,7 +44682,7 @@ document.getElementById("create-token").onclick = create_token_click;
    * operation was added.
    */
 
-  var Buffer$6 = safeBuffer.Buffer;
+  var Buffer$a = safeBuffer.Buffer;
   var K = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc | 0, 0xca62c1d6 | 0];
   var W = new Array(80);
 
@@ -41122,7 +44751,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Sha.prototype._hash = function () {
-    var H = Buffer$6.allocUnsafe(20);
+    var H = Buffer$a.allocUnsafe(20);
     H.writeInt32BE(this._a | 0, 0);
     H.writeInt32BE(this._b | 0, 4);
     H.writeInt32BE(this._c | 0, 8);
@@ -41142,7 +44771,7 @@ document.getElementById("create-token").onclick = create_token_click;
    * See http://pajhome.org.uk/crypt/md5 for details.
    */
 
-  var Buffer$7 = safeBuffer.Buffer;
+  var Buffer$b = safeBuffer.Buffer;
   var K$1 = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc | 0, 0xca62c1d6 | 0];
   var W$1 = new Array(80);
 
@@ -41215,7 +44844,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Sha1.prototype._hash = function () {
-    var H = Buffer$7.allocUnsafe(20);
+    var H = Buffer$b.allocUnsafe(20);
     H.writeInt32BE(this._a | 0, 0);
     H.writeInt32BE(this._b | 0, 4);
     H.writeInt32BE(this._c | 0, 8);
@@ -41234,7 +44863,7 @@ document.getElementById("create-token").onclick = create_token_click;
    *
    */
 
-  var Buffer$8 = safeBuffer.Buffer;
+  var Buffer$c = safeBuffer.Buffer;
   var K$2 = [0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5, 0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5, 0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3, 0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174, 0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC, 0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA, 0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7, 0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967, 0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13, 0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85, 0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3, 0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070, 0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5, 0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3, 0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208, 0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2];
   var W$2 = new Array(64);
 
@@ -41326,7 +44955,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Sha256.prototype._hash = function () {
-    var H = Buffer$8.allocUnsafe(32);
+    var H = Buffer$c.allocUnsafe(32);
     H.writeInt32BE(this._a, 0);
     H.writeInt32BE(this._b, 4);
     H.writeInt32BE(this._c, 8);
@@ -41348,7 +44977,7 @@ document.getElementById("create-token").onclick = create_token_click;
    *
    */
 
-  var Buffer$9 = safeBuffer.Buffer;
+  var Buffer$d = safeBuffer.Buffer;
   var W$3 = new Array(64);
 
   function Sha224() {
@@ -41373,7 +45002,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Sha224.prototype._hash = function () {
-    var H = Buffer$9.allocUnsafe(28);
+    var H = Buffer$d.allocUnsafe(28);
     H.writeInt32BE(this._a, 0);
     H.writeInt32BE(this._b, 4);
     H.writeInt32BE(this._c, 8);
@@ -41386,7 +45015,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
   var sha224 = Sha224;
 
-  var Buffer$a = safeBuffer.Buffer;
+  var Buffer$e = safeBuffer.Buffer;
   var K$3 = [0x428a2f98, 0xd728ae22, 0x71374491, 0x23ef65cd, 0xb5c0fbcf, 0xec4d3b2f, 0xe9b5dba5, 0x8189dbbc, 0x3956c25b, 0xf348b538, 0x59f111f1, 0xb605d019, 0x923f82a4, 0xaf194f9b, 0xab1c5ed5, 0xda6d8118, 0xd807aa98, 0xa3030242, 0x12835b01, 0x45706fbe, 0x243185be, 0x4ee4b28c, 0x550c7dc3, 0xd5ffb4e2, 0x72be5d74, 0xf27b896f, 0x80deb1fe, 0x3b1696b1, 0x9bdc06a7, 0x25c71235, 0xc19bf174, 0xcf692694, 0xe49b69c1, 0x9ef14ad2, 0xefbe4786, 0x384f25e3, 0x0fc19dc6, 0x8b8cd5b5, 0x240ca1cc, 0x77ac9c65, 0x2de92c6f, 0x592b0275, 0x4a7484aa, 0x6ea6e483, 0x5cb0a9dc, 0xbd41fbd4, 0x76f988da, 0x831153b5, 0x983e5152, 0xee66dfab, 0xa831c66d, 0x2db43210, 0xb00327c8, 0x98fb213f, 0xbf597fc7, 0xbeef0ee4, 0xc6e00bf3, 0x3da88fc2, 0xd5a79147, 0x930aa725, 0x06ca6351, 0xe003826f, 0x14292967, 0x0a0e6e70, 0x27b70a85, 0x46d22ffc, 0x2e1b2138, 0x5c26c926, 0x4d2c6dfc, 0x5ac42aed, 0x53380d13, 0x9d95b3df, 0x650a7354, 0x8baf63de, 0x766a0abb, 0x3c77b2a8, 0x81c2c92e, 0x47edaee6, 0x92722c85, 0x1482353b, 0xa2bfe8a1, 0x4cf10364, 0xa81a664b, 0xbc423001, 0xc24b8b70, 0xd0f89791, 0xc76c51a3, 0x0654be30, 0xd192e819, 0xd6ef5218, 0xd6990624, 0x5565a910, 0xf40e3585, 0x5771202a, 0x106aa070, 0x32bbd1b8, 0x19a4c116, 0xb8d2d0c8, 0x1e376c08, 0x5141ab53, 0x2748774c, 0xdf8eeb99, 0x34b0bcb5, 0xe19b48a8, 0x391c0cb3, 0xc5c95a63, 0x4ed8aa4a, 0xe3418acb, 0x5b9cca4f, 0x7763e373, 0x682e6ff3, 0xd6b2b8a3, 0x748f82ee, 0x5defb2fc, 0x78a5636f, 0x43172f60, 0x84c87814, 0xa1f0ab72, 0x8cc70208, 0x1a6439ec, 0x90befffa, 0x23631e28, 0xa4506ceb, 0xde82bde9, 0xbef9a3f7, 0xb2c67915, 0xc67178f2, 0xe372532b, 0xca273ece, 0xea26619c, 0xd186b8c7, 0x21c0c207, 0xeada7dd6, 0xcde0eb1e, 0xf57d4f7f, 0xee6ed178, 0x06f067aa, 0x72176fba, 0x0a637dc5, 0xa2c898a6, 0x113f9804, 0xbef90dae, 0x1b710b35, 0x131c471b, 0x28db77f5, 0x23047d84, 0x32caab7b, 0x40c72493, 0x3c9ebe0a, 0x15c9bebc, 0x431d67c4, 0x9c100d4c, 0x4cc5d4be, 0xcb3e42b6, 0x597f299c, 0xfc657e2a, 0x5fcb6fab, 0x3ad6faec, 0x6c44198c, 0x4a475817];
   var W$4 = new Array(160);
 
@@ -41564,7 +45193,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Sha512.prototype._hash = function () {
-    var H = Buffer$a.allocUnsafe(64);
+    var H = Buffer$e.allocUnsafe(64);
 
     function writeInt64BE(h, l, offset) {
       H.writeInt32BE(h, offset);
@@ -41584,7 +45213,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
   var sha512 = Sha512;
 
-  var Buffer$b = safeBuffer.Buffer;
+  var Buffer$f = safeBuffer.Buffer;
   var W$5 = new Array(160);
 
   function Sha384() {
@@ -41616,7 +45245,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   Sha384.prototype._hash = function () {
-    var H = Buffer$b.allocUnsafe(48);
+    var H = Buffer$f.allocUnsafe(48);
 
     function writeInt64BE(h, l, offset) {
       H.writeInt32BE(h, offset);
@@ -41650,12 +45279,1867 @@ document.getElementById("create-token").onclick = create_token_click;
     exports.sha512 = sha512;
   });
 
-  var Buffer$c = safeBuffer.Buffer;
-  var Transform$2 = Stream.Transform;
-  var StringDecoder$1 = stringDecoder.StringDecoder;
+  function BufferList() {
+    this.head = null;
+    this.tail = null;
+    this.length = 0;
+  }
+
+  BufferList.prototype.push = function (v) {
+    var entry = {
+      data: v,
+      next: null
+    };
+    if (this.length > 0) this.tail.next = entry;else this.head = entry;
+    this.tail = entry;
+    ++this.length;
+  };
+
+  BufferList.prototype.unshift = function (v) {
+    var entry = {
+      data: v,
+      next: this.head
+    };
+    if (this.length === 0) this.tail = entry;
+    this.head = entry;
+    ++this.length;
+  };
+
+  BufferList.prototype.shift = function () {
+    if (this.length === 0) return;
+    var ret = this.head.data;
+    if (this.length === 1) this.head = this.tail = null;else this.head = this.head.next;
+    --this.length;
+    return ret;
+  };
+
+  BufferList.prototype.clear = function () {
+    this.head = this.tail = null;
+    this.length = 0;
+  };
+
+  BufferList.prototype.join = function (s) {
+    if (this.length === 0) return '';
+    var p = this.head;
+    var ret = '' + p.data;
+
+    while (p = p.next) {
+      ret += s + p.data;
+    }
+
+    return ret;
+  };
+
+  BufferList.prototype.concat = function (n) {
+    if (this.length === 0) return Buffer$1.alloc(0);
+    if (this.length === 1) return this.head.data;
+    var ret = Buffer$1.allocUnsafe(n >>> 0);
+    var p = this.head;
+    var i = 0;
+
+    while (p) {
+      p.data.copy(ret, i);
+      i += p.data.length;
+      p = p.next;
+    }
+
+    return ret;
+  };
+
+  // Copyright Joyent, Inc. and other Node contributors.
+
+  var isBufferEncoding = Buffer$1.isEncoding || function (encoding) {
+    switch (encoding && encoding.toLowerCase()) {
+      case 'hex':
+      case 'utf8':
+      case 'utf-8':
+      case 'ascii':
+      case 'binary':
+      case 'base64':
+      case 'ucs2':
+      case 'ucs-2':
+      case 'utf16le':
+      case 'utf-16le':
+      case 'raw':
+        return true;
+
+      default:
+        return false;
+    }
+  };
+
+  function assertEncoding(encoding) {
+    if (encoding && !isBufferEncoding(encoding)) {
+      throw new Error('Unknown encoding: ' + encoding);
+    }
+  } // StringDecoder provides an interface for efficiently splitting a series of
+  // buffers into a series of JS strings without breaking apart multi-byte
+  // characters. CESU-8 is handled as part of the UTF-8 encoding.
+  //
+  // @TODO Handling all encodings inside a single object makes it very difficult
+  // to reason about this code, so it should be split up in the future.
+  // @TODO There should be a utf8-strict encoding that rejects invalid UTF-8 code
+  // points as used by CESU-8.
+
+
+  function StringDecoder$2(encoding) {
+    this.encoding = (encoding || 'utf8').toLowerCase().replace(/[-_]/, '');
+    assertEncoding(encoding);
+
+    switch (this.encoding) {
+      case 'utf8':
+        // CESU-8 represents each of Surrogate Pair by 3-bytes
+        this.surrogateSize = 3;
+        break;
+
+      case 'ucs2':
+      case 'utf16le':
+        // UTF-16 represents each of Surrogate Pair by 2-bytes
+        this.surrogateSize = 2;
+        this.detectIncompleteChar = utf16DetectIncompleteChar;
+        break;
+
+      case 'base64':
+        // Base-64 stores 3 bytes in 4 chars, and pads the remainder.
+        this.surrogateSize = 3;
+        this.detectIncompleteChar = base64DetectIncompleteChar;
+        break;
+
+      default:
+        this.write = passThroughWrite;
+        return;
+    } // Enough space to store all bytes of a single character. UTF-8 needs 4
+    // bytes, but CESU-8 may require up to 6 (3 bytes per surrogate).
+
+
+    this.charBuffer = new Buffer$1(6); // Number of bytes received for the current incomplete multi-byte character.
+
+    this.charReceived = 0; // Number of bytes expected for the current incomplete multi-byte character.
+
+    this.charLength = 0;
+  }
+  // guaranteed to not contain any partial multi-byte characters. Any partial
+  // character found at the end of the buffer is buffered up, and will be
+  // returned when calling write again with the remaining bytes.
+  //
+  // Note: Converting a Buffer containing an orphan surrogate to a String
+  // currently works, but converting a String to a Buffer (via `new Buffer`, or
+  // Buffer#write) will replace incomplete surrogates with the unicode
+  // replacement character. See https://codereview.chromium.org/121173009/ .
+
+  StringDecoder$2.prototype.write = function (buffer) {
+    var charStr = ''; // if our last write ended with an incomplete multibyte character
+
+    while (this.charLength) {
+      // determine how many remaining bytes this buffer has to offer for this char
+      var available = buffer.length >= this.charLength - this.charReceived ? this.charLength - this.charReceived : buffer.length; // add the new bytes to the char buffer
+
+      buffer.copy(this.charBuffer, this.charReceived, 0, available);
+      this.charReceived += available;
+
+      if (this.charReceived < this.charLength) {
+        // still not enough chars in this buffer? wait for more ...
+        return '';
+      } // remove bytes belonging to the current character from the buffer
+
+
+      buffer = buffer.slice(available, buffer.length); // get the character that was split
+
+      charStr = this.charBuffer.slice(0, this.charLength).toString(this.encoding); // CESU-8: lead surrogate (D800-DBFF) is also the incomplete character
+
+      var charCode = charStr.charCodeAt(charStr.length - 1);
+
+      if (charCode >= 0xD800 && charCode <= 0xDBFF) {
+        this.charLength += this.surrogateSize;
+        charStr = '';
+        continue;
+      }
+
+      this.charReceived = this.charLength = 0; // if there are no more bytes in this buffer, just emit our char
+
+      if (buffer.length === 0) {
+        return charStr;
+      }
+
+      break;
+    } // determine and set charLength / charReceived
+
+
+    this.detectIncompleteChar(buffer);
+    var end = buffer.length;
+
+    if (this.charLength) {
+      // buffer the incomplete character bytes we got
+      buffer.copy(this.charBuffer, 0, buffer.length - this.charReceived, end);
+      end -= this.charReceived;
+    }
+
+    charStr += buffer.toString(this.encoding, 0, end);
+    var end = charStr.length - 1;
+    var charCode = charStr.charCodeAt(end); // CESU-8: lead surrogate (D800-DBFF) is also the incomplete character
+
+    if (charCode >= 0xD800 && charCode <= 0xDBFF) {
+      var size = this.surrogateSize;
+      this.charLength += size;
+      this.charReceived += size;
+      this.charBuffer.copy(this.charBuffer, size, 0, size);
+      buffer.copy(this.charBuffer, 0, 0, size);
+      return charStr.substring(0, end);
+    } // or just emit the charStr
+
+
+    return charStr;
+  }; // detectIncompleteChar determines if there is an incomplete UTF-8 character at
+  // the end of the given buffer. If so, it sets this.charLength to the byte
+  // length that character, and sets this.charReceived to the number of bytes
+  // that are available for this character.
+
+
+  StringDecoder$2.prototype.detectIncompleteChar = function (buffer) {
+    // determine how many bytes we have to check at the end of this buffer
+    var i = buffer.length >= 3 ? 3 : buffer.length; // Figure out if one of the last i bytes of our buffer announces an
+    // incomplete char.
+
+    for (; i > 0; i--) {
+      var c = buffer[buffer.length - i]; // See http://en.wikipedia.org/wiki/UTF-8#Description
+      // 110XXXXX
+
+      if (i == 1 && c >> 5 == 0x06) {
+        this.charLength = 2;
+        break;
+      } // 1110XXXX
+
+
+      if (i <= 2 && c >> 4 == 0x0E) {
+        this.charLength = 3;
+        break;
+      } // 11110XXX
+
+
+      if (i <= 3 && c >> 3 == 0x1E) {
+        this.charLength = 4;
+        break;
+      }
+    }
+
+    this.charReceived = i;
+  };
+
+  StringDecoder$2.prototype.end = function (buffer) {
+    var res = '';
+    if (buffer && buffer.length) res = this.write(buffer);
+
+    if (this.charReceived) {
+      var cr = this.charReceived;
+      var buf = this.charBuffer;
+      var enc = this.encoding;
+      res += buf.slice(0, cr).toString(enc);
+    }
+
+    return res;
+  };
+
+  function passThroughWrite(buffer) {
+    return buffer.toString(this.encoding);
+  }
+
+  function utf16DetectIncompleteChar(buffer) {
+    this.charReceived = buffer.length % 2;
+    this.charLength = this.charReceived ? 2 : 0;
+  }
+
+  function base64DetectIncompleteChar(buffer) {
+    this.charReceived = buffer.length % 3;
+    this.charLength = this.charReceived ? 3 : 0;
+  }
+
+  var stringDecoder = /*#__PURE__*/Object.freeze({
+    __proto__: null,
+    StringDecoder: StringDecoder$2
+  });
+
+  Readable$1.ReadableState = ReadableState$1;
+  var debug$1 = debuglog('stream');
+  inherits$1(Readable$1, EventEmitter);
+
+  function prependListener$1(emitter, event, fn) {
+    // Sadly this is not cacheable as some libraries bundle their own
+    // event emitter implementation with them.
+    if (typeof emitter.prependListener === 'function') {
+      return emitter.prependListener(event, fn);
+    } else {
+      // This is a hack to make sure that our error handler is attached before any
+      // userland ones.  NEVER DO THIS. This is here only because this code needs
+      // to continue to work with older versions of Node.js that do not include
+      // the prependListener() method. The goal is to eventually remove this hack.
+      if (!emitter._events || !emitter._events[event]) emitter.on(event, fn);else if (Array.isArray(emitter._events[event])) emitter._events[event].unshift(fn);else emitter._events[event] = [fn, emitter._events[event]];
+    }
+  }
+
+  function listenerCount$1(emitter, type) {
+    return emitter.listeners(type).length;
+  }
+
+  function ReadableState$1(options, stream) {
+    options = options || {}; // object stream flag. Used to make read(n) ignore n and to
+    // make all the buffer merging and length checks go away
+
+    this.objectMode = !!options.objectMode;
+    if (stream instanceof Duplex$3) this.objectMode = this.objectMode || !!options.readableObjectMode; // the point at which it stops calling _read() to fill the buffer
+    // Note: 0 is a valid value, means "don't call _read preemptively ever"
+
+    var hwm = options.highWaterMark;
+    var defaultHwm = this.objectMode ? 16 : 16 * 1024;
+    this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm; // cast to ints.
+
+    this.highWaterMark = ~~this.highWaterMark; // A linked list is used to store data chunks instead of an array because the
+    // linked list can remove elements from the beginning faster than
+    // array.shift()
+
+    this.buffer = new BufferList();
+    this.length = 0;
+    this.pipes = null;
+    this.pipesCount = 0;
+    this.flowing = null;
+    this.ended = false;
+    this.endEmitted = false;
+    this.reading = false; // a flag to be able to tell if the onwrite cb is called immediately,
+    // or on a later tick.  We set this to true at first, because any
+    // actions that shouldn't happen until "later" should generally also
+    // not happen before the first write call.
+
+    this.sync = true; // whenever we return null, then we set a flag to say
+    // that we're awaiting a 'readable' event emission.
+
+    this.needReadable = false;
+    this.emittedReadable = false;
+    this.readableListening = false;
+    this.resumeScheduled = false; // Crypto is kind of old and crusty.  Historically, its default string
+    // encoding is 'binary' so we have to make this configurable.
+    // Everything else in the universe uses 'utf8', though.
+
+    this.defaultEncoding = options.defaultEncoding || 'utf8'; // when piping, we only care about 'readable' events that happen
+    // after read()ing all the bytes and not getting any pushback.
+
+    this.ranOut = false; // the number of writers that are awaiting a drain event in .pipe()s
+
+    this.awaitDrain = 0; // if true, a maybeReadMore has been scheduled
+
+    this.readingMore = false;
+    this.decoder = null;
+    this.encoding = null;
+
+    if (options.encoding) {
+      this.decoder = new StringDecoder$2(options.encoding);
+      this.encoding = options.encoding;
+    }
+  }
+  function Readable$1(options) {
+    if (!(this instanceof Readable$1)) return new Readable$1(options);
+    this._readableState = new ReadableState$1(options, this); // legacy
+
+    this.readable = true;
+    if (options && typeof options.read === 'function') this._read = options.read;
+    EventEmitter.call(this);
+  } // Manually shove something into the read() buffer.
+  // This returns true if the highWaterMark has not been hit yet,
+  // similar to how Writable.write() returns true if you should
+  // write() some more.
+
+  Readable$1.prototype.push = function (chunk, encoding) {
+    var state = this._readableState;
+
+    if (!state.objectMode && typeof chunk === 'string') {
+      encoding = encoding || state.defaultEncoding;
+
+      if (encoding !== state.encoding) {
+        chunk = Buffer$1.from(chunk, encoding);
+        encoding = '';
+      }
+    }
+
+    return readableAddChunk$1(this, state, chunk, encoding, false);
+  }; // Unshift should *always* be something directly out of read()
+
+
+  Readable$1.prototype.unshift = function (chunk) {
+    var state = this._readableState;
+    return readableAddChunk$1(this, state, chunk, '', true);
+  };
+
+  Readable$1.prototype.isPaused = function () {
+    return this._readableState.flowing === false;
+  };
+
+  function readableAddChunk$1(stream, state, chunk, encoding, addToFront) {
+    var er = chunkInvalid$1(state, chunk);
+
+    if (er) {
+      stream.emit('error', er);
+    } else if (chunk === null) {
+      state.reading = false;
+      onEofChunk$1(stream, state);
+    } else if (state.objectMode || chunk && chunk.length > 0) {
+      if (state.ended && !addToFront) {
+        var e = new Error('stream.push() after EOF');
+        stream.emit('error', e);
+      } else if (state.endEmitted && addToFront) {
+        var _e = new Error('stream.unshift() after end event');
+
+        stream.emit('error', _e);
+      } else {
+        var skipAdd;
+
+        if (state.decoder && !addToFront && !encoding) {
+          chunk = state.decoder.write(chunk);
+          skipAdd = !state.objectMode && chunk.length === 0;
+        }
+
+        if (!addToFront) state.reading = false; // Don't add to the buffer if we've decoded to an empty string chunk and
+        // we're not in object mode
+
+        if (!skipAdd) {
+          // if we want the data now, just emit it.
+          if (state.flowing && state.length === 0 && !state.sync) {
+            stream.emit('data', chunk);
+            stream.read(0);
+          } else {
+            // update the buffer info.
+            state.length += state.objectMode ? 1 : chunk.length;
+            if (addToFront) state.buffer.unshift(chunk);else state.buffer.push(chunk);
+            if (state.needReadable) emitReadable$1(stream);
+          }
+        }
+
+        maybeReadMore$1(stream, state);
+      }
+    } else if (!addToFront) {
+      state.reading = false;
+    }
+
+    return needMoreData(state);
+  } // if it's past the high water mark, we can push in some more.
+  // Also, if we have no data yet, we can stand some
+  // more bytes.  This is to work around cases where hwm=0,
+  // such as the repl.  Also, if the push() triggered a
+  // readable event, and the user called read(largeNumber) such that
+  // needReadable was set, then we ought to push more, so that another
+  // 'readable' event will be triggered.
+
+
+  function needMoreData(state) {
+    return !state.ended && (state.needReadable || state.length < state.highWaterMark || state.length === 0);
+  } // backwards compatibility.
+
+
+  Readable$1.prototype.setEncoding = function (enc) {
+    this._readableState.decoder = new StringDecoder$2(enc);
+    this._readableState.encoding = enc;
+    return this;
+  }; // Don't raise the hwm > 8MB
+
+
+  var MAX_HWM$1 = 0x800000;
+
+  function computeNewHighWaterMark$1(n) {
+    if (n >= MAX_HWM$1) {
+      n = MAX_HWM$1;
+    } else {
+      // Get the next highest power of 2 to prevent increasing hwm excessively in
+      // tiny amounts
+      n--;
+      n |= n >>> 1;
+      n |= n >>> 2;
+      n |= n >>> 4;
+      n |= n >>> 8;
+      n |= n >>> 16;
+      n++;
+    }
+
+    return n;
+  } // This function is designed to be inlinable, so please take care when making
+  // changes to the function body.
+
+
+  function howMuchToRead$1(n, state) {
+    if (n <= 0 || state.length === 0 && state.ended) return 0;
+    if (state.objectMode) return 1;
+
+    if (n !== n) {
+      // Only flow one buffer at a time
+      if (state.flowing && state.length) return state.buffer.head.data.length;else return state.length;
+    } // If we're asking for more than the current hwm, then raise the hwm.
+
+
+    if (n > state.highWaterMark) state.highWaterMark = computeNewHighWaterMark$1(n);
+    if (n <= state.length) return n; // Don't have enough
+
+    if (!state.ended) {
+      state.needReadable = true;
+      return 0;
+    }
+
+    return state.length;
+  } // you can override either this method, or the async _read(n) below.
+
+
+  Readable$1.prototype.read = function (n) {
+    debug$1('read', n);
+    n = parseInt(n, 10);
+    var state = this._readableState;
+    var nOrig = n;
+    if (n !== 0) state.emittedReadable = false; // if we're doing read(0) to trigger a readable event, but we
+    // already have a bunch of data in the buffer, then just trigger
+    // the 'readable' event and move on.
+
+    if (n === 0 && state.needReadable && (state.length >= state.highWaterMark || state.ended)) {
+      debug$1('read: emitReadable', state.length, state.ended);
+      if (state.length === 0 && state.ended) endReadable$1(this);else emitReadable$1(this);
+      return null;
+    }
+
+    n = howMuchToRead$1(n, state); // if we've ended, and we're now clear, then finish it up.
+
+    if (n === 0 && state.ended) {
+      if (state.length === 0) endReadable$1(this);
+      return null;
+    } // All the actual chunk generation logic needs to be
+    // *below* the call to _read.  The reason is that in certain
+    // synthetic stream cases, such as passthrough streams, _read
+    // may be a completely synchronous operation which may change
+    // the state of the read buffer, providing enough data when
+    // before there was *not* enough.
+    //
+    // So, the steps are:
+    // 1. Figure out what the state of things will be after we do
+    // a read from the buffer.
+    //
+    // 2. If that resulting state will trigger a _read, then call _read.
+    // Note that this may be asynchronous, or synchronous.  Yes, it is
+    // deeply ugly to write APIs this way, but that still doesn't mean
+    // that the Readable class should behave improperly, as streams are
+    // designed to be sync/async agnostic.
+    // Take note if the _read call is sync or async (ie, if the read call
+    // has returned yet), so that we know whether or not it's safe to emit
+    // 'readable' etc.
+    //
+    // 3. Actually pull the requested chunks out of the buffer and return.
+    // if we need a readable event, then we need to do some reading.
+
+
+    var doRead = state.needReadable;
+    debug$1('need readable', doRead); // if we currently have less than the highWaterMark, then also read some
+
+    if (state.length === 0 || state.length - n < state.highWaterMark) {
+      doRead = true;
+      debug$1('length less than watermark', doRead);
+    } // however, if we've ended, then there's no point, and if we're already
+    // reading, then it's unnecessary.
+
+
+    if (state.ended || state.reading) {
+      doRead = false;
+      debug$1('reading or ended', doRead);
+    } else if (doRead) {
+      debug$1('do read');
+      state.reading = true;
+      state.sync = true; // if the length is currently zero, then we *need* a readable event.
+
+      if (state.length === 0) state.needReadable = true; // call internal read method
+
+      this._read(state.highWaterMark);
+
+      state.sync = false; // If _read pushed data synchronously, then `reading` will be false,
+      // and we need to re-evaluate how much data we can return to the user.
+
+      if (!state.reading) n = howMuchToRead$1(nOrig, state);
+    }
+
+    var ret;
+    if (n > 0) ret = fromList$1(n, state);else ret = null;
+
+    if (ret === null) {
+      state.needReadable = true;
+      n = 0;
+    } else {
+      state.length -= n;
+    }
+
+    if (state.length === 0) {
+      // If we have nothing in the buffer, then we want to know
+      // as soon as we *do* get something into the buffer.
+      if (!state.ended) state.needReadable = true; // If we tried to read() past the EOF, then emit end on the next tick.
+
+      if (nOrig !== n && state.ended) endReadable$1(this);
+    }
+
+    if (ret !== null) this.emit('data', ret);
+    return ret;
+  };
+
+  function chunkInvalid$1(state, chunk) {
+    var er = null;
+
+    if (!isBuffer(chunk) && typeof chunk !== 'string' && chunk !== null && chunk !== undefined && !state.objectMode) {
+      er = new TypeError('Invalid non-string/buffer chunk');
+    }
+
+    return er;
+  }
+
+  function onEofChunk$1(stream, state) {
+    if (state.ended) return;
+
+    if (state.decoder) {
+      var chunk = state.decoder.end();
+
+      if (chunk && chunk.length) {
+        state.buffer.push(chunk);
+        state.length += state.objectMode ? 1 : chunk.length;
+      }
+    }
+
+    state.ended = true; // emit 'readable' now to make sure it gets picked up.
+
+    emitReadable$1(stream);
+  } // Don't emit readable right away in sync mode, because this can trigger
+  // another read() call => stack overflow.  This way, it might trigger
+  // a nextTick recursion warning, but that's not so bad.
+
+
+  function emitReadable$1(stream) {
+    var state = stream._readableState;
+    state.needReadable = false;
+
+    if (!state.emittedReadable) {
+      debug$1('emitReadable', state.flowing);
+      state.emittedReadable = true;
+      if (state.sync) nextTick(emitReadable_$1, stream);else emitReadable_$1(stream);
+    }
+  }
+
+  function emitReadable_$1(stream) {
+    debug$1('emit readable');
+    stream.emit('readable');
+    flow$1(stream);
+  } // at this point, the user has presumably seen the 'readable' event,
+  // and called read() to consume some data.  that may have triggered
+  // in turn another _read(n) call, in which case reading = true if
+  // it's in progress.
+  // However, if we're not ended, or reading, and the length < hwm,
+  // then go ahead and try to read some more preemptively.
+
+
+  function maybeReadMore$1(stream, state) {
+    if (!state.readingMore) {
+      state.readingMore = true;
+      nextTick(maybeReadMore_$1, stream, state);
+    }
+  }
+
+  function maybeReadMore_$1(stream, state) {
+    var len = state.length;
+
+    while (!state.reading && !state.flowing && !state.ended && state.length < state.highWaterMark) {
+      debug$1('maybeReadMore read 0');
+      stream.read(0);
+      if (len === state.length) // didn't get any data, stop spinning.
+        break;else len = state.length;
+    }
+
+    state.readingMore = false;
+  } // abstract method.  to be overridden in specific implementation classes.
+  // call cb(er, data) where data is <= n in length.
+  // for virtual (non-string, non-buffer) streams, "length" is somewhat
+  // arbitrary, and perhaps not very meaningful.
+
+
+  Readable$1.prototype._read = function (n) {
+    this.emit('error', new Error('not implemented'));
+  };
+
+  Readable$1.prototype.pipe = function (dest, pipeOpts) {
+    var src = this;
+    var state = this._readableState;
+
+    switch (state.pipesCount) {
+      case 0:
+        state.pipes = dest;
+        break;
+
+      case 1:
+        state.pipes = [state.pipes, dest];
+        break;
+
+      default:
+        state.pipes.push(dest);
+        break;
+    }
+
+    state.pipesCount += 1;
+    debug$1('pipe count=%d opts=%j', state.pipesCount, pipeOpts);
+    var doEnd = !pipeOpts || pipeOpts.end !== false;
+    var endFn = doEnd ? onend : cleanup;
+    if (state.endEmitted) nextTick(endFn);else src.once('end', endFn);
+    dest.on('unpipe', onunpipe);
+
+    function onunpipe(readable) {
+      debug$1('onunpipe');
+
+      if (readable === src) {
+        cleanup();
+      }
+    }
+
+    function onend() {
+      debug$1('onend');
+      dest.end();
+    } // when the dest drains, it reduces the awaitDrain counter
+    // on the source.  This would be more elegant with a .once()
+    // handler in flow(), but adding and removing repeatedly is
+    // too slow.
+
+
+    var ondrain = pipeOnDrain$1(src);
+    dest.on('drain', ondrain);
+    var cleanedUp = false;
+
+    function cleanup() {
+      debug$1('cleanup'); // cleanup event handlers once the pipe is broken
+
+      dest.removeListener('close', onclose);
+      dest.removeListener('finish', onfinish);
+      dest.removeListener('drain', ondrain);
+      dest.removeListener('error', onerror);
+      dest.removeListener('unpipe', onunpipe);
+      src.removeListener('end', onend);
+      src.removeListener('end', cleanup);
+      src.removeListener('data', ondata);
+      cleanedUp = true; // if the reader is waiting for a drain event from this
+      // specific writer, then it would cause it to never start
+      // flowing again.
+      // So, if this is awaiting a drain, then we just call it now.
+      // If we don't know, then assume that we are waiting for one.
+
+      if (state.awaitDrain && (!dest._writableState || dest._writableState.needDrain)) ondrain();
+    } // If the user pushes more data while we're writing to dest then we'll end up
+    // in ondata again. However, we only want to increase awaitDrain once because
+    // dest will only emit one 'drain' event for the multiple writes.
+    // => Introduce a guard on increasing awaitDrain.
+
+
+    var increasedAwaitDrain = false;
+    src.on('data', ondata);
+
+    function ondata(chunk) {
+      debug$1('ondata');
+      increasedAwaitDrain = false;
+      var ret = dest.write(chunk);
+
+      if (false === ret && !increasedAwaitDrain) {
+        // If the user unpiped during `dest.write()`, it is possible
+        // to get stuck in a permanently paused state if that write
+        // also returned false.
+        // => Check whether `dest` is still a piping destination.
+        if ((state.pipesCount === 1 && state.pipes === dest || state.pipesCount > 1 && indexOf$1(state.pipes, dest) !== -1) && !cleanedUp) {
+          debug$1('false write response, pause', src._readableState.awaitDrain);
+          src._readableState.awaitDrain++;
+          increasedAwaitDrain = true;
+        }
+
+        src.pause();
+      }
+    } // if the dest has an error, then stop piping into it.
+    // however, don't suppress the throwing behavior for this.
+
+
+    function onerror(er) {
+      debug$1('onerror', er);
+      unpipe();
+      dest.removeListener('error', onerror);
+      if (listenerCount$1(dest, 'error') === 0) dest.emit('error', er);
+    } // Make sure our error handler is attached before userland ones.
+
+
+    prependListener$1(dest, 'error', onerror); // Both close and finish should trigger unpipe, but only once.
+
+    function onclose() {
+      dest.removeListener('finish', onfinish);
+      unpipe();
+    }
+
+    dest.once('close', onclose);
+
+    function onfinish() {
+      debug$1('onfinish');
+      dest.removeListener('close', onclose);
+      unpipe();
+    }
+
+    dest.once('finish', onfinish);
+
+    function unpipe() {
+      debug$1('unpipe');
+      src.unpipe(dest);
+    } // tell the dest that it's being piped to
+
+
+    dest.emit('pipe', src); // start the flow if it hasn't been started already.
+
+    if (!state.flowing) {
+      debug$1('pipe resume');
+      src.resume();
+    }
+
+    return dest;
+  };
+
+  function pipeOnDrain$1(src) {
+    return function () {
+      var state = src._readableState;
+      debug$1('pipeOnDrain', state.awaitDrain);
+      if (state.awaitDrain) state.awaitDrain--;
+
+      if (state.awaitDrain === 0 && src.listeners('data').length) {
+        state.flowing = true;
+        flow$1(src);
+      }
+    };
+  }
+
+  Readable$1.prototype.unpipe = function (dest) {
+    var state = this._readableState; // if we're not piping anywhere, then do nothing.
+
+    if (state.pipesCount === 0) return this; // just one destination.  most common case.
+
+    if (state.pipesCount === 1) {
+      // passed in one, but it's not the right one.
+      if (dest && dest !== state.pipes) return this;
+      if (!dest) dest = state.pipes; // got a match.
+
+      state.pipes = null;
+      state.pipesCount = 0;
+      state.flowing = false;
+      if (dest) dest.emit('unpipe', this);
+      return this;
+    } // slow case. multiple pipe destinations.
+
+
+    if (!dest) {
+      // remove all.
+      var dests = state.pipes;
+      var len = state.pipesCount;
+      state.pipes = null;
+      state.pipesCount = 0;
+      state.flowing = false;
+
+      for (var _i = 0; _i < len; _i++) {
+        dests[_i].emit('unpipe', this);
+      }
+
+      return this;
+    } // try to find the right one.
+
+
+    var i = indexOf$1(state.pipes, dest);
+    if (i === -1) return this;
+    state.pipes.splice(i, 1);
+    state.pipesCount -= 1;
+    if (state.pipesCount === 1) state.pipes = state.pipes[0];
+    dest.emit('unpipe', this);
+    return this;
+  }; // set up data events if they are asked for
+  // Ensure readable listeners eventually get something
+
+
+  Readable$1.prototype.on = function (ev, fn) {
+    var res = EventEmitter.prototype.on.call(this, ev, fn);
+
+    if (ev === 'data') {
+      // Start flowing on next tick if stream isn't explicitly paused
+      if (this._readableState.flowing !== false) this.resume();
+    } else if (ev === 'readable') {
+      var state = this._readableState;
+
+      if (!state.endEmitted && !state.readableListening) {
+        state.readableListening = state.needReadable = true;
+        state.emittedReadable = false;
+
+        if (!state.reading) {
+          nextTick(nReadingNextTick$1, this);
+        } else if (state.length) {
+          emitReadable$1(this);
+        }
+      }
+    }
+
+    return res;
+  };
+
+  Readable$1.prototype.addListener = Readable$1.prototype.on;
+
+  function nReadingNextTick$1(self) {
+    debug$1('readable nexttick read 0');
+    self.read(0);
+  } // pause() and resume() are remnants of the legacy readable stream API
+  // If the user uses them, then switch into old mode.
+
+
+  Readable$1.prototype.resume = function () {
+    var state = this._readableState;
+
+    if (!state.flowing) {
+      debug$1('resume');
+      state.flowing = true;
+      resume$1(this, state);
+    }
+
+    return this;
+  };
+
+  function resume$1(stream, state) {
+    if (!state.resumeScheduled) {
+      state.resumeScheduled = true;
+      nextTick(resume_$1, stream, state);
+    }
+  }
+
+  function resume_$1(stream, state) {
+    if (!state.reading) {
+      debug$1('resume read 0');
+      stream.read(0);
+    }
+
+    state.resumeScheduled = false;
+    state.awaitDrain = 0;
+    stream.emit('resume');
+    flow$1(stream);
+    if (state.flowing && !state.reading) stream.read(0);
+  }
+
+  Readable$1.prototype.pause = function () {
+    debug$1('call pause flowing=%j', this._readableState.flowing);
+
+    if (false !== this._readableState.flowing) {
+      debug$1('pause');
+      this._readableState.flowing = false;
+      this.emit('pause');
+    }
+
+    return this;
+  };
+
+  function flow$1(stream) {
+    var state = stream._readableState;
+    debug$1('flow', state.flowing);
+
+    while (state.flowing && stream.read() !== null) {}
+  } // wrap an old-style stream as the async data source.
+  // This is *not* part of the readable stream interface.
+  // It is an ugly unfortunate mess of history.
+
+
+  Readable$1.prototype.wrap = function (stream) {
+    var state = this._readableState;
+    var paused = false;
+    var self = this;
+    stream.on('end', function () {
+      debug$1('wrapped end');
+
+      if (state.decoder && !state.ended) {
+        var chunk = state.decoder.end();
+        if (chunk && chunk.length) self.push(chunk);
+      }
+
+      self.push(null);
+    });
+    stream.on('data', function (chunk) {
+      debug$1('wrapped data');
+      if (state.decoder) chunk = state.decoder.write(chunk); // don't skip over falsy values in objectMode
+
+      if (state.objectMode && (chunk === null || chunk === undefined)) return;else if (!state.objectMode && (!chunk || !chunk.length)) return;
+      var ret = self.push(chunk);
+
+      if (!ret) {
+        paused = true;
+        stream.pause();
+      }
+    }); // proxy all the other methods.
+    // important when wrapping filters and duplexes.
+
+    for (var i in stream) {
+      if (this[i] === undefined && typeof stream[i] === 'function') {
+        this[i] = function (method) {
+          return function () {
+            return stream[method].apply(stream, arguments);
+          };
+        }(i);
+      }
+    } // proxy certain important events.
+
+
+    var events = ['error', 'close', 'destroy', 'pause', 'resume'];
+    forEach(events, function (ev) {
+      stream.on(ev, self.emit.bind(self, ev));
+    }); // when we try to consume some more bytes, simply unpause the
+    // underlying stream.
+
+    self._read = function (n) {
+      debug$1('wrapped _read', n);
+
+      if (paused) {
+        paused = false;
+        stream.resume();
+      }
+    };
+
+    return self;
+  }; // exposed for testing purposes only.
+
+
+  Readable$1._fromList = fromList$1; // Pluck off n bytes from an array of buffers.
+  // Length is the combined lengths of all the buffers in the list.
+  // This function is designed to be inlinable, so please take care when making
+  // changes to the function body.
+
+  function fromList$1(n, state) {
+    // nothing buffered
+    if (state.length === 0) return null;
+    var ret;
+    if (state.objectMode) ret = state.buffer.shift();else if (!n || n >= state.length) {
+      // read it all, truncate the list
+      if (state.decoder) ret = state.buffer.join('');else if (state.buffer.length === 1) ret = state.buffer.head.data;else ret = state.buffer.concat(state.length);
+      state.buffer.clear();
+    } else {
+      // read part of list
+      ret = fromListPartial(n, state.buffer, state.decoder);
+    }
+    return ret;
+  } // Extracts only enough buffered data to satisfy the amount requested.
+  // This function is designed to be inlinable, so please take care when making
+  // changes to the function body.
+
+
+  function fromListPartial(n, list, hasStrings) {
+    var ret;
+
+    if (n < list.head.data.length) {
+      // slice is the same for buffers and strings
+      ret = list.head.data.slice(0, n);
+      list.head.data = list.head.data.slice(n);
+    } else if (n === list.head.data.length) {
+      // first chunk is a perfect match
+      ret = list.shift();
+    } else {
+      // result spans more than one buffer
+      ret = hasStrings ? copyFromBufferString(n, list) : copyFromBuffer(n, list);
+    }
+
+    return ret;
+  } // Copies a specified amount of characters from the list of buffered data
+  // chunks.
+  // This function is designed to be inlinable, so please take care when making
+  // changes to the function body.
+
+
+  function copyFromBufferString(n, list) {
+    var p = list.head;
+    var c = 1;
+    var ret = p.data;
+    n -= ret.length;
+
+    while (p = p.next) {
+      var str = p.data;
+      var nb = n > str.length ? str.length : n;
+      if (nb === str.length) ret += str;else ret += str.slice(0, n);
+      n -= nb;
+
+      if (n === 0) {
+        if (nb === str.length) {
+          ++c;
+          if (p.next) list.head = p.next;else list.head = list.tail = null;
+        } else {
+          list.head = p;
+          p.data = str.slice(nb);
+        }
+
+        break;
+      }
+
+      ++c;
+    }
+
+    list.length -= c;
+    return ret;
+  } // Copies a specified amount of bytes from the list of buffered data chunks.
+  // This function is designed to be inlinable, so please take care when making
+  // changes to the function body.
+
+
+  function copyFromBuffer(n, list) {
+    var ret = Buffer$1.allocUnsafe(n);
+    var p = list.head;
+    var c = 1;
+    p.data.copy(ret);
+    n -= p.data.length;
+
+    while (p = p.next) {
+      var buf = p.data;
+      var nb = n > buf.length ? buf.length : n;
+      buf.copy(ret, ret.length - n, 0, nb);
+      n -= nb;
+
+      if (n === 0) {
+        if (nb === buf.length) {
+          ++c;
+          if (p.next) list.head = p.next;else list.head = list.tail = null;
+        } else {
+          list.head = p;
+          p.data = buf.slice(nb);
+        }
+
+        break;
+      }
+
+      ++c;
+    }
+
+    list.length -= c;
+    return ret;
+  }
+
+  function endReadable$1(stream) {
+    var state = stream._readableState; // If we get here before consuming all the bytes, then that is a
+    // bug in node.  Should never happen.
+
+    if (state.length > 0) throw new Error('"endReadable()" called on non-empty stream');
+
+    if (!state.endEmitted) {
+      state.ended = true;
+      nextTick(endReadableNT$1, state, stream);
+    }
+  }
+
+  function endReadableNT$1(state, stream) {
+    // Check that we didn't get one last unshift.
+    if (!state.endEmitted && state.length === 0) {
+      state.endEmitted = true;
+      stream.readable = false;
+      stream.emit('end');
+    }
+  }
+
+  function forEach(xs, f) {
+    for (var i = 0, l = xs.length; i < l; i++) {
+      f(xs[i], i);
+    }
+  }
+
+  function indexOf$1(xs, x) {
+    for (var i = 0, l = xs.length; i < l; i++) {
+      if (xs[i] === x) return i;
+    }
+
+    return -1;
+  }
+
+  // A bit simpler than readable streams.
+  Writable$1.WritableState = WritableState$1;
+  inherits$1(Writable$1, EventEmitter);
+
+  function nop$1() {}
+
+  function WriteReq(chunk, encoding, cb) {
+    this.chunk = chunk;
+    this.encoding = encoding;
+    this.callback = cb;
+    this.next = null;
+  }
+
+  function WritableState$1(options, stream) {
+    Object.defineProperty(this, 'buffer', {
+      get: deprecate(function () {
+        return this.getBuffer();
+      }, '_writableState.buffer is deprecated. Use _writableState.getBuffer ' + 'instead.')
+    });
+    options = options || {}; // object stream flag to indicate whether or not this stream
+    // contains buffers or objects.
+
+    this.objectMode = !!options.objectMode;
+    if (stream instanceof Duplex$3) this.objectMode = this.objectMode || !!options.writableObjectMode; // the point at which write() starts returning false
+    // Note: 0 is a valid value, means that we always return false if
+    // the entire buffer is not flushed immediately on write()
+
+    var hwm = options.highWaterMark;
+    var defaultHwm = this.objectMode ? 16 : 16 * 1024;
+    this.highWaterMark = hwm || hwm === 0 ? hwm : defaultHwm; // cast to ints.
+
+    this.highWaterMark = ~~this.highWaterMark;
+    this.needDrain = false; // at the start of calling end()
+
+    this.ending = false; // when end() has been called, and returned
+
+    this.ended = false; // when 'finish' is emitted
+
+    this.finished = false; // should we decode strings into buffers before passing to _write?
+    // this is here so that some node-core streams can optimize string
+    // handling at a lower level.
+
+    var noDecode = options.decodeStrings === false;
+    this.decodeStrings = !noDecode; // Crypto is kind of old and crusty.  Historically, its default string
+    // encoding is 'binary' so we have to make this configurable.
+    // Everything else in the universe uses 'utf8', though.
+
+    this.defaultEncoding = options.defaultEncoding || 'utf8'; // not an actual buffer we keep track of, but a measurement
+    // of how much we're waiting to get pushed to some underlying
+    // socket or file.
+
+    this.length = 0; // a flag to see when we're in the middle of a write.
+
+    this.writing = false; // when true all writes will be buffered until .uncork() call
+
+    this.corked = 0; // a flag to be able to tell if the onwrite cb is called immediately,
+    // or on a later tick.  We set this to true at first, because any
+    // actions that shouldn't happen until "later" should generally also
+    // not happen before the first write call.
+
+    this.sync = true; // a flag to know if we're processing previously buffered items, which
+    // may call the _write() callback in the same tick, so that we don't
+    // end up in an overlapped onwrite situation.
+
+    this.bufferProcessing = false; // the callback that's passed to _write(chunk,cb)
+
+    this.onwrite = function (er) {
+      onwrite$1(stream, er);
+    }; // the callback that the user supplies to write(chunk,encoding,cb)
+
+
+    this.writecb = null; // the amount that is being written when _write is called.
+
+    this.writelen = 0;
+    this.bufferedRequest = null;
+    this.lastBufferedRequest = null; // number of pending user-supplied write callbacks
+    // this must be 0 before 'finish' can be emitted
+
+    this.pendingcb = 0; // emit prefinish if the only thing we're waiting for is _write cbs
+    // This is relevant for synchronous Transform streams
+
+    this.prefinished = false; // True if the error was already emitted and should not be thrown again
+
+    this.errorEmitted = false; // count buffered requests
+
+    this.bufferedRequestCount = 0; // allocate the first CorkedRequest, there is always
+    // one allocated and free to use, and we maintain at most two
+
+    this.corkedRequestsFree = new CorkedRequest$1(this);
+  }
+
+  WritableState$1.prototype.getBuffer = function writableStateGetBuffer() {
+    var current = this.bufferedRequest;
+    var out = [];
+
+    while (current) {
+      out.push(current);
+      current = current.next;
+    }
+
+    return out;
+  };
+  function Writable$1(options) {
+    // Writable ctor is applied to Duplexes, though they're not
+    // instanceof Writable, they're instanceof Readable.
+    if (!(this instanceof Writable$1) && !(this instanceof Duplex$3)) return new Writable$1(options);
+    this._writableState = new WritableState$1(options, this); // legacy.
+
+    this.writable = true;
+
+    if (options) {
+      if (typeof options.write === 'function') this._write = options.write;
+      if (typeof options.writev === 'function') this._writev = options.writev;
+    }
+
+    EventEmitter.call(this);
+  } // Otherwise people can pipe Writable streams, which is just wrong.
+
+  Writable$1.prototype.pipe = function () {
+    this.emit('error', new Error('Cannot pipe, not readable'));
+  };
+
+  function writeAfterEnd$1(stream, cb) {
+    var er = new Error('write after end'); // TODO: defer error events consistently everywhere, not just the cb
+
+    stream.emit('error', er);
+    nextTick(cb, er);
+  } // If we get something that is not a buffer, string, null, or undefined,
+  // and we're not in objectMode, then that's an error.
+  // Otherwise stream chunks are all considered to be of length=1, and the
+  // watermarks determine how many objects to keep in the buffer, rather than
+  // how many bytes or characters.
+
+
+  function validChunk$1(stream, state, chunk, cb) {
+    var valid = true;
+    var er = false; // Always throw error if a null is written
+    // if we are not in object mode then throw
+    // if it is not a buffer, string, or undefined.
+
+    if (chunk === null) {
+      er = new TypeError('May not write null values to stream');
+    } else if (!Buffer$1.isBuffer(chunk) && typeof chunk !== 'string' && chunk !== undefined && !state.objectMode) {
+      er = new TypeError('Invalid non-string/buffer chunk');
+    }
+
+    if (er) {
+      stream.emit('error', er);
+      nextTick(cb, er);
+      valid = false;
+    }
+
+    return valid;
+  }
+
+  Writable$1.prototype.write = function (chunk, encoding, cb) {
+    var state = this._writableState;
+    var ret = false;
+
+    if (typeof encoding === 'function') {
+      cb = encoding;
+      encoding = null;
+    }
+
+    if (Buffer$1.isBuffer(chunk)) encoding = 'buffer';else if (!encoding) encoding = state.defaultEncoding;
+    if (typeof cb !== 'function') cb = nop$1;
+    if (state.ended) writeAfterEnd$1(this, cb);else if (validChunk$1(this, state, chunk, cb)) {
+      state.pendingcb++;
+      ret = writeOrBuffer$1(this, state, chunk, encoding, cb);
+    }
+    return ret;
+  };
+
+  Writable$1.prototype.cork = function () {
+    var state = this._writableState;
+    state.corked++;
+  };
+
+  Writable$1.prototype.uncork = function () {
+    var state = this._writableState;
+
+    if (state.corked) {
+      state.corked--;
+      if (!state.writing && !state.corked && !state.finished && !state.bufferProcessing && state.bufferedRequest) clearBuffer$1(this, state);
+    }
+  };
+
+  Writable$1.prototype.setDefaultEncoding = function setDefaultEncoding(encoding) {
+    // node::ParseEncoding() requires lower case.
+    if (typeof encoding === 'string') encoding = encoding.toLowerCase();
+    if (!(['hex', 'utf8', 'utf-8', 'ascii', 'binary', 'base64', 'ucs2', 'ucs-2', 'utf16le', 'utf-16le', 'raw'].indexOf((encoding + '').toLowerCase()) > -1)) throw new TypeError('Unknown encoding: ' + encoding);
+    this._writableState.defaultEncoding = encoding;
+    return this;
+  };
+
+  function decodeChunk$1(state, chunk, encoding) {
+    if (!state.objectMode && state.decodeStrings !== false && typeof chunk === 'string') {
+      chunk = Buffer$1.from(chunk, encoding);
+    }
+
+    return chunk;
+  } // if we're already writing something, then just put this
+  // in the queue, and wait our turn.  Otherwise, call _write
+  // If we return false, then we need a drain event, so set that flag.
+
+
+  function writeOrBuffer$1(stream, state, chunk, encoding, cb) {
+    chunk = decodeChunk$1(state, chunk, encoding);
+    if (Buffer$1.isBuffer(chunk)) encoding = 'buffer';
+    var len = state.objectMode ? 1 : chunk.length;
+    state.length += len;
+    var ret = state.length < state.highWaterMark; // we must ensure that previous needDrain will not be reset to false.
+
+    if (!ret) state.needDrain = true;
+
+    if (state.writing || state.corked) {
+      var last = state.lastBufferedRequest;
+      state.lastBufferedRequest = new WriteReq(chunk, encoding, cb);
+
+      if (last) {
+        last.next = state.lastBufferedRequest;
+      } else {
+        state.bufferedRequest = state.lastBufferedRequest;
+      }
+
+      state.bufferedRequestCount += 1;
+    } else {
+      doWrite$1(stream, state, false, len, chunk, encoding, cb);
+    }
+
+    return ret;
+  }
+
+  function doWrite$1(stream, state, writev, len, chunk, encoding, cb) {
+    state.writelen = len;
+    state.writecb = cb;
+    state.writing = true;
+    state.sync = true;
+    if (writev) stream._writev(chunk, state.onwrite);else stream._write(chunk, encoding, state.onwrite);
+    state.sync = false;
+  }
+
+  function onwriteError$1(stream, state, sync, er, cb) {
+    --state.pendingcb;
+    if (sync) nextTick(cb, er);else cb(er);
+    stream._writableState.errorEmitted = true;
+    stream.emit('error', er);
+  }
+
+  function onwriteStateUpdate$1(state) {
+    state.writing = false;
+    state.writecb = null;
+    state.length -= state.writelen;
+    state.writelen = 0;
+  }
+
+  function onwrite$1(stream, er) {
+    var state = stream._writableState;
+    var sync = state.sync;
+    var cb = state.writecb;
+    onwriteStateUpdate$1(state);
+    if (er) onwriteError$1(stream, state, sync, er, cb);else {
+      // Check if we're actually ready to finish, but don't emit yet
+      var finished = needFinish$1(state);
+
+      if (!finished && !state.corked && !state.bufferProcessing && state.bufferedRequest) {
+        clearBuffer$1(stream, state);
+      }
+
+      if (sync) {
+        /*<replacement>*/
+        nextTick(afterWrite$1, stream, state, finished, cb);
+        /*</replacement>*/
+      } else {
+        afterWrite$1(stream, state, finished, cb);
+      }
+    }
+  }
+
+  function afterWrite$1(stream, state, finished, cb) {
+    if (!finished) onwriteDrain$1(stream, state);
+    state.pendingcb--;
+    cb();
+    finishMaybe$1(stream, state);
+  } // Must force callback to be called on nextTick, so that we don't
+  // emit 'drain' before the write() consumer gets the 'false' return
+  // value, and has a chance to attach a 'drain' listener.
+
+
+  function onwriteDrain$1(stream, state) {
+    if (state.length === 0 && state.needDrain) {
+      state.needDrain = false;
+      stream.emit('drain');
+    }
+  } // if there's something in the buffer waiting, then process it
+
+
+  function clearBuffer$1(stream, state) {
+    state.bufferProcessing = true;
+    var entry = state.bufferedRequest;
+
+    if (stream._writev && entry && entry.next) {
+      // Fast case, write everything using _writev()
+      var l = state.bufferedRequestCount;
+      var buffer = new Array(l);
+      var holder = state.corkedRequestsFree;
+      holder.entry = entry;
+      var count = 0;
+
+      while (entry) {
+        buffer[count] = entry;
+        entry = entry.next;
+        count += 1;
+      }
+
+      doWrite$1(stream, state, true, state.length, buffer, '', holder.finish); // doWrite is almost always async, defer these to save a bit of time
+      // as the hot path ends with doWrite
+
+      state.pendingcb++;
+      state.lastBufferedRequest = null;
+
+      if (holder.next) {
+        state.corkedRequestsFree = holder.next;
+        holder.next = null;
+      } else {
+        state.corkedRequestsFree = new CorkedRequest$1(state);
+      }
+    } else {
+      // Slow case, write chunks one-by-one
+      while (entry) {
+        var chunk = entry.chunk;
+        var encoding = entry.encoding;
+        var cb = entry.callback;
+        var len = state.objectMode ? 1 : chunk.length;
+        doWrite$1(stream, state, false, len, chunk, encoding, cb);
+        entry = entry.next; // if we didn't call the onwrite immediately, then
+        // it means that we need to wait until it does.
+        // also, that means that the chunk and cb are currently
+        // being processed, so move the buffer counter past them.
+
+        if (state.writing) {
+          break;
+        }
+      }
+
+      if (entry === null) state.lastBufferedRequest = null;
+    }
+
+    state.bufferedRequestCount = 0;
+    state.bufferedRequest = entry;
+    state.bufferProcessing = false;
+  }
+
+  Writable$1.prototype._write = function (chunk, encoding, cb) {
+    cb(new Error('not implemented'));
+  };
+
+  Writable$1.prototype._writev = null;
+
+  Writable$1.prototype.end = function (chunk, encoding, cb) {
+    var state = this._writableState;
+
+    if (typeof chunk === 'function') {
+      cb = chunk;
+      chunk = null;
+      encoding = null;
+    } else if (typeof encoding === 'function') {
+      cb = encoding;
+      encoding = null;
+    }
+
+    if (chunk !== null && chunk !== undefined) this.write(chunk, encoding); // .end() fully uncorks
+
+    if (state.corked) {
+      state.corked = 1;
+      this.uncork();
+    } // ignore unnecessary end() calls.
+
+
+    if (!state.ending && !state.finished) endWritable$1(this, state, cb);
+  };
+
+  function needFinish$1(state) {
+    return state.ending && state.length === 0 && state.bufferedRequest === null && !state.finished && !state.writing;
+  }
+
+  function prefinish$2(stream, state) {
+    if (!state.prefinished) {
+      state.prefinished = true;
+      stream.emit('prefinish');
+    }
+  }
+
+  function finishMaybe$1(stream, state) {
+    var need = needFinish$1(state);
+
+    if (need) {
+      if (state.pendingcb === 0) {
+        prefinish$2(stream, state);
+        state.finished = true;
+        stream.emit('finish');
+      } else {
+        prefinish$2(stream, state);
+      }
+    }
+
+    return need;
+  }
+
+  function endWritable$1(stream, state, cb) {
+    state.ending = true;
+    finishMaybe$1(stream, state);
+
+    if (cb) {
+      if (state.finished) nextTick(cb);else stream.once('finish', cb);
+    }
+
+    state.ended = true;
+    stream.writable = false;
+  } // It seems a linked list but it is not
+  // there will be only 2 of these for each stream
+
+
+  function CorkedRequest$1(state) {
+    var _this = this;
+
+    this.next = null;
+    this.entry = null;
+
+    this.finish = function (err) {
+      var entry = _this.entry;
+      _this.entry = null;
+
+      while (entry) {
+        var cb = entry.callback;
+        state.pendingcb--;
+        cb(err);
+        entry = entry.next;
+      }
+
+      if (state.corkedRequestsFree) {
+        state.corkedRequestsFree.next = _this;
+      } else {
+        state.corkedRequestsFree = _this;
+      }
+    };
+  }
+
+  inherits$1(Duplex$3, Readable$1);
+  var keys$1 = Object.keys(Writable$1.prototype);
+
+  for (var v$1 = 0; v$1 < keys$1.length; v$1++) {
+    var method$1 = keys$1[v$1];
+    if (!Duplex$3.prototype[method$1]) Duplex$3.prototype[method$1] = Writable$1.prototype[method$1];
+  }
+  function Duplex$3(options) {
+    if (!(this instanceof Duplex$3)) return new Duplex$3(options);
+    Readable$1.call(this, options);
+    Writable$1.call(this, options);
+    if (options && options.readable === false) this.readable = false;
+    if (options && options.writable === false) this.writable = false;
+    this.allowHalfOpen = true;
+    if (options && options.allowHalfOpen === false) this.allowHalfOpen = false;
+    this.once('end', onend$1);
+  } // the no-half-open enforcer
+
+  function onend$1() {
+    // if we allow half-open state, or if the writable side ended,
+    // then we're ok.
+    if (this.allowHalfOpen || this._writableState.ended) return; // no more data can be written.
+    // But allow more writes to happen in this tick.
+
+    nextTick(onEndNT$1, this);
+  }
+
+  function onEndNT$1(self) {
+    self.end();
+  }
+
+  // a transform stream is a readable/writable stream where you do
+  inherits$1(Transform$2, Duplex$3);
+
+  function TransformState(stream) {
+    this.afterTransform = function (er, data) {
+      return afterTransform$1(stream, er, data);
+    };
+
+    this.needTransform = false;
+    this.transforming = false;
+    this.writecb = null;
+    this.writechunk = null;
+    this.writeencoding = null;
+  }
+
+  function afterTransform$1(stream, er, data) {
+    var ts = stream._transformState;
+    ts.transforming = false;
+    var cb = ts.writecb;
+    if (!cb) return stream.emit('error', new Error('no writecb in Transform class'));
+    ts.writechunk = null;
+    ts.writecb = null;
+    if (data !== null && data !== undefined) stream.push(data);
+    cb(er);
+    var rs = stream._readableState;
+    rs.reading = false;
+
+    if (rs.needReadable || rs.length < rs.highWaterMark) {
+      stream._read(rs.highWaterMark);
+    }
+  }
+  function Transform$2(options) {
+    if (!(this instanceof Transform$2)) return new Transform$2(options);
+    Duplex$3.call(this, options);
+    this._transformState = new TransformState(this); // when the writable side finishes, then flush out anything remaining.
+
+    var stream = this; // start out asking for a readable event once data is transformed.
+
+    this._readableState.needReadable = true; // we have implemented the _read method, and done the other things
+    // that Readable wants before the first _read call, so unset the
+    // sync guard flag.
+
+    this._readableState.sync = false;
+
+    if (options) {
+      if (typeof options.transform === 'function') this._transform = options.transform;
+      if (typeof options.flush === 'function') this._flush = options.flush;
+    }
+
+    this.once('prefinish', function () {
+      if (typeof this._flush === 'function') this._flush(function (er) {
+        done$1(stream, er);
+      });else done$1(stream);
+    });
+  }
+
+  Transform$2.prototype.push = function (chunk, encoding) {
+    this._transformState.needTransform = false;
+    return Duplex$3.prototype.push.call(this, chunk, encoding);
+  }; // This is the part where you do stuff!
+  // override this function in implementation classes.
+  // 'chunk' is an input chunk.
+  //
+  // Call `push(newChunk)` to pass along transformed output
+  // to the readable side.  You may call 'push' zero or more times.
+  //
+  // Call `cb(err)` when you are done with this chunk.  If you pass
+  // an error, then that'll put the hurt on the whole operation.  If you
+  // never call cb(), then you'll never get another chunk.
+
+
+  Transform$2.prototype._transform = function (chunk, encoding, cb) {
+    throw new Error('Not implemented');
+  };
+
+  Transform$2.prototype._write = function (chunk, encoding, cb) {
+    var ts = this._transformState;
+    ts.writecb = cb;
+    ts.writechunk = chunk;
+    ts.writeencoding = encoding;
+
+    if (!ts.transforming) {
+      var rs = this._readableState;
+      if (ts.needTransform || rs.needReadable || rs.length < rs.highWaterMark) this._read(rs.highWaterMark);
+    }
+  }; // Doesn't matter what the args are here.
+  // _transform does all the work.
+  // That we got here means that the readable side wants more data.
+
+
+  Transform$2.prototype._read = function (n) {
+    var ts = this._transformState;
+
+    if (ts.writechunk !== null && ts.writecb && !ts.transforming) {
+      ts.transforming = true;
+
+      this._transform(ts.writechunk, ts.writeencoding, ts.afterTransform);
+    } else {
+      // mark that we need a transform, so that any data that comes in
+      // will get processed, now that we've asked for it.
+      ts.needTransform = true;
+    }
+  };
+
+  function done$1(stream, er) {
+    if (er) return stream.emit('error', er); // if there's nothing in the write buffer, then that means
+    // that nothing more will ever be provided
+
+    var ws = stream._writableState;
+    var ts = stream._transformState;
+    if (ws.length) throw new Error('Calling transform done when ws.length != 0');
+    if (ts.transforming) throw new Error('Calling transform done when still transforming');
+    return stream.push(null);
+  }
+
+  inherits$1(PassThrough$1, Transform$2);
+  function PassThrough$1(options) {
+    if (!(this instanceof PassThrough$1)) return new PassThrough$1(options);
+    Transform$2.call(this, options);
+  }
+
+  PassThrough$1.prototype._transform = function (chunk, encoding, cb) {
+    cb(null, chunk);
+  };
+
+  inherits$1(Stream, EventEmitter);
+  Stream.Readable = Readable$1;
+  Stream.Writable = Writable$1;
+  Stream.Duplex = Duplex$3;
+  Stream.Transform = Transform$2;
+  Stream.PassThrough = PassThrough$1; // Backwards-compat with node 0.4.x
+
+  Stream.Stream = Stream;
+  // part of this class) is overridden in the Readable class.
+
+  function Stream() {
+    EventEmitter.call(this);
+  }
+
+  Stream.prototype.pipe = function (dest, options) {
+    var source = this;
+
+    function ondata(chunk) {
+      if (dest.writable) {
+        if (false === dest.write(chunk) && source.pause) {
+          source.pause();
+        }
+      }
+    }
+
+    source.on('data', ondata);
+
+    function ondrain() {
+      if (source.readable && source.resume) {
+        source.resume();
+      }
+    }
+
+    dest.on('drain', ondrain); // If the 'end' option is not supplied, dest.end() will be called when
+    // source gets the 'end' or 'close' events.  Only dest.end() once.
+
+    if (!dest._isStdio && (!options || options.end !== false)) {
+      source.on('end', onend);
+      source.on('close', onclose);
+    }
+
+    var didOnEnd = false;
+
+    function onend() {
+      if (didOnEnd) return;
+      didOnEnd = true;
+      dest.end();
+    }
+
+    function onclose() {
+      if (didOnEnd) return;
+      didOnEnd = true;
+      if (typeof dest.destroy === 'function') dest.destroy();
+    } // don't leave dangling pipes when there are errors.
+
+
+    function onerror(er) {
+      cleanup();
+
+      if (EventEmitter.listenerCount(this, 'error') === 0) {
+        throw er; // Unhandled stream error in pipe.
+      }
+    }
+
+    source.on('error', onerror);
+    dest.on('error', onerror); // remove all the event listeners that were added.
+
+    function cleanup() {
+      source.removeListener('data', ondata);
+      dest.removeListener('drain', ondrain);
+      source.removeListener('end', onend);
+      source.removeListener('close', onclose);
+      source.removeListener('error', onerror);
+      dest.removeListener('error', onerror);
+      source.removeListener('end', cleanup);
+      source.removeListener('close', cleanup);
+      dest.removeListener('close', cleanup);
+    }
+
+    source.on('end', cleanup);
+    source.on('close', cleanup);
+    dest.on('close', cleanup);
+    dest.emit('pipe', source); // Allow for unix-like usage: A.pipe(B).pipe(C)
+
+    return dest;
+  };
+
+  var Buffer$g = safeBuffer.Buffer;
+  var Transform$3 = Stream.Transform;
+  var StringDecoder$3 = stringDecoder.StringDecoder;
 
   function CipherBase(hashMode) {
-    Transform$2.call(this);
+    Transform$3.call(this);
     this.hashMode = typeof hashMode === 'string';
 
     if (this.hashMode) {
@@ -41673,11 +47157,11 @@ document.getElementById("create-token").onclick = create_token_click;
     this._encoding = null;
   }
 
-  inherits_browser(CipherBase, Transform$2);
+  inherits_browser(CipherBase, Transform$3);
 
   CipherBase.prototype.update = function (data, inputEnc, outputEnc) {
     if (typeof data === 'string') {
-      data = Buffer$c.from(data, inputEnc);
+      data = Buffer$g.from(data, inputEnc);
     }
 
     var outData = this._update(data);
@@ -41734,7 +47218,7 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   CipherBase.prototype._finalOrDigest = function (outputEnc) {
-    var outData = this.__final() || Buffer$c.alloc(0);
+    var outData = this.__final() || Buffer$g.alloc(0);
 
     if (outputEnc) {
       outData = this._toString(outData, outputEnc, true);
@@ -41745,7 +47229,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
   CipherBase.prototype._toString = function (value, enc, fin) {
     if (!this._decoder) {
-      this._decoder = new StringDecoder$1(enc);
+      this._decoder = new StringDecoder$3(enc);
       this._encoding = enc;
     }
 
@@ -41777,7 +47261,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return this._hash.digest();
   };
 
-  var browser = function createHash(alg) {
+  var browser$2 = function createHash(alg) {
     alg = alg.toLowerCase();
     if (alg === 'md5') return new md5_js();
     if (alg === 'rmd160' || alg === 'ripemd160') return new ripemd160();
@@ -41785,1632 +47269,1760 @@ document.getElementById("create-token").onclick = create_token_click;
   };
 
   var jsbiUmd = createCommonjsModule(function (module, exports) {
-    (function (e, i) {
-       module.exports = i() ;
+    (function (i, _) {
+       module.exports = _() ;
     })(commonjsGlobal, function () {
 
-      function e(i) {
-        return e = "function" == typeof Symbol && "symbol" == _typeof(Symbol.iterator) ? function (e) {
-          return _typeof(e);
-        } : function (e) {
-          return e && "function" == typeof Symbol && e.constructor === Symbol && e !== Symbol.prototype ? "symbol" : _typeof(e);
-        }, e(i);
-      }
+      var i = Math.imul,
+          _ = Math.clz32,
+          t = Math.abs,
+          e = Math.max,
+          g = Math.floor;
 
-      function i(e, i) {
-        if (!(e instanceof i)) throw new TypeError("Cannot call a class as a function");
-      }
+      var o = /*#__PURE__*/function (_Array) {
+        _inherits(o, _Array);
 
-      function t(e, t) {
-        for (var _, n = 0; n < t.length; n++) {
-          _ = t[n], _.enumerable = _.enumerable || !1, _.configurable = !0, "value" in _ && (_.writable = !0), Object.defineProperty(e, _.key, _);
-        }
-      }
+        var _super = _createSuper(o);
 
-      function _(e, i, _) {
-        return i && t(e.prototype, i), _ && t(e, _), e;
-      }
+        function o(i, _) {
+          var _this;
 
-      function n(e, i) {
-        if ("function" != typeof i && null !== i) throw new TypeError("Super expression must either be null or a function");
-        e.prototype = Object.create(i && i.prototype, {
-          constructor: {
-            value: e,
-            writable: !0,
-            configurable: !0
-          }
-        }), i && l(e, i);
-      }
+          _classCallCheck(this, o);
 
-      function g(e) {
-        return g = Object.setPrototypeOf ? Object.getPrototypeOf : function (e) {
-          return e.__proto__ || Object.getPrototypeOf(e);
-        }, g(e);
-      }
-
-      function l(e, i) {
-        return l = Object.setPrototypeOf || function (e, i) {
-          return e.__proto__ = i, e;
-        }, l(e, i);
-      }
-
-      function o() {
-        if ("undefined" == typeof Reflect || !Reflect.construct) return !1;
-        if (Reflect.construct.sham) return !1;
-        if ("function" == typeof Proxy) return !0;
-
-        try {
-          return Date.prototype.toString.call(Reflect.construct(Date, [], function () {})), !0;
-        } catch (i) {
-          return !1;
-        }
-      }
-
-      function a() {
-        return a = o() ? Reflect.construct : function (e, i, t) {
-          var _ = [null];
-
-          _.push.apply(_, i);
-
-          var n = Function.bind.apply(e, _),
-              g = new n();
-          return t && l(g, t.prototype), g;
-        }, a.apply(null, arguments);
-      }
-
-      function s(e) {
-        return -1 !== Function.toString.call(e).indexOf("[native code]");
-      }
-
-      function u(e) {
-        var i = "function" == typeof Map ? new Map() : void 0;
-        return u = function u(e) {
-          function t() {
-            return a(e, arguments, g(this).constructor);
-          }
-
-          if (null === e || !s(e)) return e;
-          if ("function" != typeof e) throw new TypeError("Super expression must either be null or a function");
-
-          if ("undefined" != typeof i) {
-            if (i.has(e)) return i.get(e);
-            i.set(e, t);
-          }
-
-          return t.prototype = Object.create(e.prototype, {
-            constructor: {
-              value: t,
-              enumerable: !1,
-              writable: !0,
-              configurable: !0
-            }
-          }), l(t, e);
-        }, u(e);
-      }
-
-      function r(e) {
-        if (void 0 === e) throw new ReferenceError("this hasn't been initialised - super() hasn't been called");
-        return e;
-      }
-
-      function d(e, i) {
-        return i && ("object" == _typeof(i) || "function" == typeof i) ? i : r(e);
-      }
-
-      var h = function (t) {
-        var o = Math.abs,
-            a = Math.max,
-            s = Math.imul,
-            u = Math.clz32;
-
-        function l(e, t) {
-          var _;
-
-          if (i(this, l), e > l.__kMaxLength) throw new RangeError("Maximum BigInt size exceeded");
-          return _ = d(this, g(l).call(this, e)), _.sign = t, _;
+          if (_this = _super.call(this, i), _this.sign = _, i > o.__kMaxLength) throw new RangeError("Maximum BigInt size exceeded");
+          return _possibleConstructorReturn(_this);
         }
 
-        return n(l, t), _(l, [{
+        _createClass(o, [{
           key: "toDebugString",
-          value: function value() {
-            var e = ["BigInt["],
-                i = !0,
-                t = !1,
-                _ = void 0;
+          value: function toDebugString() {
+            var i = ["BigInt["];
+
+            var _iterator = _createForOfIteratorHelper(this),
+                _step;
 
             try {
-              for (var n, g, l = this[Symbol.iterator](); !(i = (n = l.next()).done); i = !0) {
-                g = n.value, e.push((g ? (g >>> 0).toString(16) : g) + ", ");
+              for (_iterator.s(); !(_step = _iterator.n()).done;) {
+                var _2 = _step.value;
+                i.push((_2 ? (_2 >>> 0).toString(16) : _2) + ", ");
               }
-            } catch (e) {
-              t = !0, _ = e;
+            } catch (err) {
+              _iterator.e(err);
             } finally {
-              try {
-                i || null == l["return"] || l["return"]();
-              } finally {
-                if (t) throw _;
-              }
+              _iterator.f();
             }
 
-            return e.push("]"), e.join("");
+            return i.push("]"), i.join("");
           }
         }, {
           key: "toString",
-          value: function value() {
-            var e = 0 < arguments.length && void 0 !== arguments[0] ? arguments[0] : 10;
-            if (2 > e || 36 < e) throw new RangeError("toString() radix argument must be between 2 and 36");
-            return 0 === this.length ? "0" : 0 == (e & e - 1) ? l.__toStringBasePowerOfTwo(this, e) : l.__toStringGeneric(this, e, !1);
+          value: function toString() {
+            var i = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : 10;
+            if (2 > i || 36 < i) throw new RangeError("toString() radix argument must be between 2 and 36");
+            return 0 === this.length ? "0" : 0 == (i & i - 1) ? o.__toStringBasePowerOfTwo(this, i) : o.__toStringGeneric(this, i, !1);
           }
         }, {
           key: "__copy",
-          value: function value() {
-            for (var e = new l(this.length, this.sign), t = 0; t < this.length; t++) {
-              e[t] = this[t];
+          value: function __copy() {
+            var _ = new o(this.length, this.sign);
+
+            for (var _t = 0; _t < this.length; _t++) {
+              _[_t] = this[_t];
             }
 
-            return e;
+            return _;
           }
         }, {
           key: "__trim",
-          value: function value() {
-            for (var e = this.length, i = this[e - 1]; 0 === i;) {
-              e--, i = this[e - 1], this.pop();
+          value: function __trim() {
+            var i = this.length,
+                _ = this[i - 1];
+
+            for (; 0 === _;) {
+              i--, _ = this[i - 1], this.pop();
             }
 
-            return 0 === e && (this.sign = !1), this;
+            return 0 === i && (this.sign = !1), this;
           }
         }, {
           key: "__initializeDigits",
-          value: function value() {
-            for (var e = 0; e < this.length; e++) {
-              this[e] = 0;
+          value: function __initializeDigits() {
+            for (var _3 = 0; _3 < this.length; _3++) {
+              this[_3] = 0;
             }
           }
         }, {
           key: "__clzmsd",
-          value: function value() {
-            return u(this[this.length - 1]);
+          value: function __clzmsd() {
+            return o.__clz30(this.__digit(this.length - 1));
           }
         }, {
           key: "__inplaceMultiplyAdd",
-          value: function value(e, t, _) {
-            _ > this.length && (_ = this.length);
+          value: function __inplaceMultiplyAdd(i, _, t) {
+            t > this.length && (t = this.length);
+            var e = 32767 & i,
+                n = i >>> 15;
+            var g = 0,
+                s = _;
 
-            for (var n = 65535 & e, g = e >>> 16, l = 0, o = 65535 & t, a = t >>> 16, u = 0; u < _; u++) {
-              var r = this.__digit(u),
-                  d = 65535 & r,
-                  h = r >>> 16,
-                  b = s(d, n),
-                  m = s(d, g),
-                  c = s(h, n),
-                  v = s(h, g),
-                  y = o + (65535 & b),
-                  f = a + l + (y >>> 16) + (b >>> 16) + (65535 & m) + (65535 & c);
+            for (var l = 0; l < t; l++) {
+              var _i = this.__digit(l),
+                  _4 = 32767 & _i,
+                  _t2 = _i >>> 15,
+                  r = o.__imul(_4, e),
+                  a = o.__imul(_4, n),
+                  u = o.__imul(_t2, e),
+                  d = o.__imul(_t2, n);
 
-              o = (m >>> 16) + (c >>> 16) + (65535 & v) + (f >>> 16), l = o >>> 16, o &= 65535, a = v >>> 16;
-
-              this.__setDigit(u, 65535 & y | f << 16);
+              var h = s + r + g;
+              g = h >>> 30, h &= 1073741823, h += ((32767 & a) << 15) + ((32767 & u) << 15), g += h >>> 30, s = d + (a >>> 15) + (u >>> 15), this.__setDigit(l, 1073741823 & h);
             }
 
-            if (0 !== l || 0 !== o || 0 !== a) throw new Error("implementation bug");
+            if (0 != g || 0 !== s) throw new Error("implementation bug");
           }
         }, {
           key: "__inplaceAdd",
-          value: function value(e, t, _) {
-            for (var n, g = 0, l = 0; l < _; l++) {
-              n = this.__halfDigit(t + l) + e.__halfDigit(l) + g, g = n >>> 16, this.__setHalfDigit(t + l, n);
+          value: function __inplaceAdd(_, t, e) {
+            var n = 0;
+
+            for (var _g = 0; _g < e; _g++) {
+              var _i2 = this.__halfDigit(t + _g) + _.__halfDigit(_g) + n;
+
+              n = _i2 >>> 15, this.__setHalfDigit(t + _g, 32767 & _i2);
             }
 
-            return g;
+            return n;
           }
         }, {
           key: "__inplaceSub",
-          value: function value(e, t, _) {
+          value: function __inplaceSub(_, t, e) {
             var n = 0;
 
             if (1 & t) {
               t >>= 1;
 
-              for (var g = this.__digit(t), l = 65535 & g, o = 0; o < _ - 1 >>> 1; o++) {
-                var a = e.__digit(o),
-                    s = (g >>> 16) - (65535 & a) - n;
+              var _g2 = this.__digit(t),
+                  _o11 = 32767 & _g2,
+                  s = 0;
 
-                n = 1 & s >>> 16, this.__setDigit(t + o, s << 16 | 65535 & l), g = this.__digit(t + o + 1), l = (65535 & g) - (a >>> 16) - n, n = 1 & l >>> 16;
+              for (; s < e - 1 >>> 1; s++) {
+                var _i4 = _.__digit(s),
+                    _e = (_g2 >>> 15) - (32767 & _i4) - n;
+
+                n = 1 & _e >>> 15, this.__setDigit(t + s, (32767 & _e) << 15 | 32767 & _o11), _g2 = this.__digit(t + s + 1), _o11 = (32767 & _g2) - (_i4 >>> 15) - n, n = 1 & _o11 >>> 15;
               }
 
-              var u = e.__digit(o),
-                  r = (g >>> 16) - (65535 & u) - n;
+              var _i3 = _.__digit(s),
+                  l = (_g2 >>> 15) - (32767 & _i3) - n;
 
-              n = 1 & r >>> 16, this.__setDigit(t + o, r << 16 | 65535 & l);
-              if (t + o + 1 >= this.length) throw new RangeError("out of bounds");
-              0 == (1 & _) && (g = this.__digit(t + o + 1), l = (65535 & g) - (u >>> 16) - n, n = 1 & l >>> 16, this.__setDigit(t + e.length, 4294901760 & g | 65535 & l));
+              n = 1 & l >>> 15, this.__setDigit(t + s, (32767 & l) << 15 | 32767 & _o11);
+              if (t + s + 1 >= this.length) throw new RangeError("out of bounds");
+              0 == (1 & e) && (_g2 = this.__digit(t + s + 1), _o11 = (32767 & _g2) - (_i3 >>> 15) - n, n = 1 & _o11 >>> 15, this.__setDigit(t + _.length, 1073709056 & _g2 | 32767 & _o11));
             } else {
               t >>= 1;
+              var _g3 = 0;
 
-              for (var d = 0; d < e.length - 1; d++) {
-                var h = this.__digit(t + d),
-                    b = e.__digit(d),
-                    m = (65535 & h) - (65535 & b) - n;
+              for (; _g3 < _.length - 1; _g3++) {
+                var _i6 = this.__digit(t + _g3),
+                    _e2 = _.__digit(_g3),
+                    _o13 = (32767 & _i6) - (32767 & _e2) - n;
 
-                n = 1 & m >>> 16;
-                var c = (h >>> 16) - (b >>> 16) - n;
-                n = 1 & c >>> 16, this.__setDigit(t + d, c << 16 | 65535 & m);
+                n = 1 & _o13 >>> 15;
+
+                var _s2 = (_i6 >>> 15) - (_e2 >>> 15) - n;
+
+                n = 1 & _s2 >>> 15, this.__setDigit(t + _g3, (32767 & _s2) << 15 | 32767 & _o13);
               }
 
-              var v = this.__digit(t + d),
-                  y = e.__digit(d),
-                  f = (65535 & v) - (65535 & y) - n;
+              var _i5 = this.__digit(t + _g3),
+                  _o12 = _.__digit(_g3),
+                  _s = (32767 & _i5) - (32767 & _o12) - n;
 
-              n = 1 & f >>> 16;
-              var D = 0;
-              0 == (1 & _) && (D = (v >>> 16) - (y >>> 16) - n, n = 1 & D >>> 16), this.__setDigit(t + d, D << 16 | 65535 & f);
+              n = 1 & _s >>> 15;
+              var _l = 0;
+              0 == (1 & e) && (_l = (_i5 >>> 15) - (_o12 >>> 15) - n, n = 1 & _l >>> 15), this.__setDigit(t + _g3, (32767 & _l) << 15 | 32767 & _s);
             }
 
             return n;
           }
         }, {
           key: "__inplaceRightShift",
-          value: function value(e) {
-            if (0 !== e) {
-              for (var t, _ = this.__digit(0) >>> e, n = this.length - 1, g = 0; g < n; g++) {
-                t = this.__digit(g + 1), this.__setDigit(g, t << 32 - e | _), _ = t >>> e;
-              }
+          value: function __inplaceRightShift(_) {
+            if (0 === _) return;
 
-              this.__setDigit(n, _);
+            var t = this.__digit(0) >>> _;
+
+            var e = this.length - 1;
+
+            for (var n = 0; n < e; n++) {
+              var _i7 = this.__digit(n + 1);
+
+              this.__setDigit(n, 1073741823 & _i7 << 30 - _ | t), t = _i7 >>> _;
             }
+
+            this.__setDigit(e, t);
           }
         }, {
           key: "__digit",
-          value: function value(e) {
-            return this[e];
+          value: function __digit(_) {
+            return this[_];
           }
         }, {
           key: "__unsignedDigit",
-          value: function value(e) {
-            return this[e] >>> 0;
+          value: function __unsignedDigit(_) {
+            return this[_] >>> 0;
           }
         }, {
           key: "__setDigit",
-          value: function value(e, i) {
-            this[e] = 0 | i;
+          value: function __setDigit(_, i) {
+            this[_] = 0 | i;
           }
         }, {
           key: "__setDigitGrow",
-          value: function value(e, i) {
-            this[e] = 0 | i;
+          value: function __setDigitGrow(_, i) {
+            this[_] = 0 | i;
           }
         }, {
           key: "__halfDigitLength",
-          value: function value() {
-            var e = this.length;
-            return 65535 >= this.__unsignedDigit(e - 1) ? 2 * e - 1 : 2 * e;
+          value: function __halfDigitLength() {
+            var i = this.length;
+            return 32767 >= this.__unsignedDigit(i - 1) ? 2 * i - 1 : 2 * i;
           }
         }, {
           key: "__halfDigit",
-          value: function value(e) {
-            return 65535 & this[e >>> 1] >>> ((1 & e) << 4);
+          value: function __halfDigit(_) {
+            return 32767 & this[_ >>> 1] >>> 15 * (1 & _);
           }
         }, {
           key: "__setHalfDigit",
-          value: function value(e, i) {
-            var t = e >>> 1,
-                _ = this.__digit(t),
-                n = 1 & e ? 65535 & _ | i << 16 : 4294901760 & _ | 65535 & i;
+          value: function __setHalfDigit(_, i) {
+            var t = _ >>> 1,
+                e = this.__digit(t),
+                n = 1 & _ ? 32767 & e | i << 15 : 1073709056 & e | 32767 & i;
 
             this.__setDigit(t, n);
           }
         }], [{
           key: "BigInt",
-          value: function value(i) {
-            var t = Math.floor,
-                _ = Number.isFinite;
+          value: function BigInt(i) {
+            var _ = Number.isFinite;
 
             if ("number" == typeof i) {
-              if (0 === i) return l.__zero();
-              if ((0 | i) === i) return 0 > i ? l.__oneDigit(-i, !0) : l.__oneDigit(i, !1);
-              if (!_(i) || t(i) !== i) throw new RangeError("The number " + i + " cannot be converted to BigInt because it is not an integer");
-              return l.__fromDouble(i);
+              if (0 === i) return o.__zero();
+              if (o.__isOneDigitInt(i)) return 0 > i ? o.__oneDigit(-i, !0) : o.__oneDigit(i, !1);
+              if (!_(i) || g(i) !== i) throw new RangeError("The number " + i + " cannot be converted to BigInt because it is not an integer");
+              return o.__fromDouble(i);
             }
 
             if ("string" == typeof i) {
-              var n = l.__fromString(i);
+              var _5 = o.__fromString(i);
 
-              if (null === n) throw new SyntaxError("Cannot convert " + i + " to a BigInt");
-              return n;
+              if (null === _5) throw new SyntaxError("Cannot convert " + i + " to a BigInt");
+              return _5;
             }
 
-            if ("boolean" == typeof i) return !0 === i ? l.__oneDigit(1, !1) : l.__zero();
+            if ("boolean" == typeof i) return !0 === i ? o.__oneDigit(1, !1) : o.__zero();
 
-            if ("object" === e(i)) {
-              if (i.constructor === l) return i;
+            if ("object" == _typeof(i)) {
+              if (i.constructor === o) return i;
 
-              var g = l.__toPrimitive(i);
+              var _6 = o.__toPrimitive(i);
 
-              return l.BigInt(g);
+              return o.BigInt(_6);
             }
 
             throw new TypeError("Cannot convert " + i + " to a BigInt");
           }
         }, {
           key: "toNumber",
-          value: function value(e) {
-            var i = e.length;
-            if (0 === i) return 0;
+          value: function toNumber(i) {
+            var _ = i.length;
+            if (0 === _) return 0;
 
-            if (1 === i) {
-              var t = e.__unsignedDigit(0);
+            if (1 === _) {
+              var _7 = i.__unsignedDigit(0);
 
-              return e.sign ? -t : t;
+              return i.sign ? -_7 : _7;
             }
 
-            var _ = e.__digit(i - 1),
-                n = u(_),
-                g = 32 * i - n;
+            var t = i.__digit(_ - 1),
+                e = o.__clz30(t),
+                n = 30 * _ - e;
 
-            if (1024 < g) return e.sign ? -Infinity : 1 / 0;
-            var o = g - 1,
-                a = _,
-                s = i - 1,
-                r = n + 1,
-                d = 32 === r ? 0 : a << r;
-            d >>>= 12;
-            var h = r - 12,
-                b = 12 <= r ? 0 : a << 20 + r,
-                m = 20 + r;
-            0 < h && 0 < s && (s--, a = e.__digit(s), d |= a >>> 32 - h, b = a << h, m = h), 0 < m && 0 < s && (s--, a = e.__digit(s), b |= a >>> 32 - m, m -= 32);
+            if (1024 < n) return i.sign ? -Infinity : 1 / 0;
+            var g = n - 1,
+                s = t,
+                l = _ - 1;
+            var r = e + 3;
+            var a = 32 === r ? 0 : s << r;
+            a >>>= 12;
+            var u = r - 12;
+            var d = 12 <= r ? 0 : s << 20 + r,
+                h = 20 + r;
 
-            var c = l.__decideRounding(e, m, s, a);
+            for (0 < u && 0 < l && (l--, s = i.__digit(l), a |= s >>> 30 - u, d = s << u + 2, h = u + 2); 0 < h && 0 < l;) {
+              l--, s = i.__digit(l), d |= 30 <= h ? s << h - 30 : s >>> 30 - h, h -= 30;
+            }
 
-            if ((1 === c || 0 === c && 1 == (1 & b)) && (b = b + 1 >>> 0, 0 === b && (d++, 0 != d >>> 20 && (d = 0, o++, 1023 < o)))) return e.sign ? -Infinity : 1 / 0;
-            var v = e.sign ? -2147483648 : 0;
-            return o = o + 1023 << 20, l.__kBitConversionInts[1] = v | o | d, l.__kBitConversionInts[0] = b, l.__kBitConversionDouble[0];
+            var m = o.__decideRounding(i, h, l, s);
+
+            if ((1 === m || 0 === m && 1 == (1 & d)) && (d = d + 1 >>> 0, 0 === d && (a++, 0 != a >>> 20 && (a = 0, g++, 1023 < g)))) return i.sign ? -Infinity : 1 / 0;
+            var b = i.sign ? -2147483648 : 0;
+            return g = g + 1023 << 20, o.__kBitConversionInts[1] = b | g | a, o.__kBitConversionInts[0] = d, o.__kBitConversionDouble[0];
           }
         }, {
           key: "unaryMinus",
-          value: function value(e) {
-            if (0 === e.length) return e;
+          value: function unaryMinus(i) {
+            if (0 === i.length) return i;
 
-            var i = e.__copy();
+            var _ = i.__copy();
 
-            return i.sign = !e.sign, i;
+            return _.sign = !i.sign, _;
           }
         }, {
           key: "bitwiseNot",
-          value: function value(e) {
-            return e.sign ? l.__absoluteSubOne(e).__trim() : l.__absoluteAddOne(e, !0);
+          value: function bitwiseNot(i) {
+            return i.sign ? o.__absoluteSubOne(i).__trim() : o.__absoluteAddOne(i, !0);
           }
         }, {
           key: "exponentiate",
-          value: function value(e, i) {
-            if (i.sign) throw new RangeError("Exponent must be positive");
-            if (0 === i.length) return l.__oneDigit(1, !1);
-            if (0 === e.length) return e;
-            if (1 === e.length && 1 === e.__digit(0)) return e.sign && 0 == (1 & i.__digit(0)) ? l.unaryMinus(e) : e;
-            if (1 < i.length) throw new RangeError("BigInt too big");
+          value: function exponentiate(i, _) {
+            if (_.sign) throw new RangeError("Exponent must be positive");
+            if (0 === _.length) return o.__oneDigit(1, !1);
+            if (0 === i.length) return i;
+            if (1 === i.length && 1 === i.__digit(0)) return i.sign && 0 == (1 & _.__digit(0)) ? o.unaryMinus(i) : i;
+            if (1 < _.length) throw new RangeError("BigInt too big");
 
-            var t = i.__unsignedDigit(0);
+            var t = _.__unsignedDigit(0);
 
-            if (1 === t) return e;
-            if (t >= l.__kMaxLengthBits) throw new RangeError("BigInt too big");
+            if (1 === t) return i;
+            if (t >= o.__kMaxLengthBits) throw new RangeError("BigInt too big");
 
-            if (1 === e.length && 2 === e.__digit(0)) {
-              var _ = 1 + (t >>> 5),
-                  n = e.sign && 0 != (1 & t),
-                  g = new l(_, n);
+            if (1 === i.length && 2 === i.__digit(0)) {
+              var _8 = 1 + (0 | t / 30),
+                  _e3 = i.sign && 0 != (1 & t),
+                  _n = new o(_8, _e3);
 
-              g.__initializeDigits();
+              _n.__initializeDigits();
 
-              var o = 1 << (31 & t);
-              return g.__setDigit(_ - 1, o), g;
+              var _g4 = 1 << t % 30;
+
+              return _n.__setDigit(_8 - 1, _g4), _n;
             }
 
-            var a = null,
-                s = e;
+            var e = null,
+                n = i;
 
-            for (0 != (1 & t) && (a = e), t >>= 1; 0 !== t; t >>= 1) {
-              s = l.multiply(s, s), 0 != (1 & t) && (null === a ? a = s : a = l.multiply(a, s));
+            for (0 != (1 & t) && (e = i), t >>= 1; 0 !== t; t >>= 1) {
+              n = o.multiply(n, n), 0 != (1 & t) && (null === e ? e = n : e = o.multiply(e, n));
             }
 
-            return a;
+            return e;
           }
         }, {
           key: "multiply",
-          value: function value(e, t) {
-            if (0 === e.length) return e;
+          value: function multiply(_, t) {
+            if (0 === _.length) return _;
             if (0 === t.length) return t;
+            var i = _.length + t.length;
+            30 <= _.__clzmsd() + t.__clzmsd() && i--;
+            var e = new o(i, _.sign !== t.sign);
 
-            var _ = e.length + t.length;
+            e.__initializeDigits();
 
-            32 <= e.__clzmsd() + t.__clzmsd() && _--;
-            var n = new l(_, e.sign !== t.sign);
-
-            n.__initializeDigits();
-
-            for (var g = 0; g < e.length; g++) {
-              l.__multiplyAccumulate(t, e.__digit(g), n, g);
+            for (var n = 0; n < _.length; n++) {
+              o.__multiplyAccumulate(t, _.__digit(n), e, n);
             }
 
-            return n.__trim();
+            return e.__trim();
           }
         }, {
           key: "divide",
-          value: function value(e, i) {
-            if (0 === i.length) throw new RangeError("Division by zero");
-            if (0 > l.__absoluteCompare(e, i)) return l.__zero();
+          value: function divide(i, _) {
+            if (0 === _.length) throw new RangeError("Division by zero");
+            if (0 > o.__absoluteCompare(i, _)) return o.__zero();
 
-            var t,
-                _ = e.sign !== i.sign,
-                n = i.__unsignedDigit(0);
+            var t = i.sign !== _.sign,
+                e = _.__unsignedDigit(0);
 
-            if (1 === i.length && 65535 >= n) {
-              if (1 === n) return _ === e.sign ? e : l.unaryMinus(e);
-              t = l.__absoluteDivSmall(e, n, null);
-            } else t = l.__absoluteDivLarge(e, i, !0, !1);
+            var n;
 
-            return t.sign = _, t.__trim();
+            if (1 === _.length && 32767 >= e) {
+              if (1 === e) return t === i.sign ? i : o.unaryMinus(i);
+              n = o.__absoluteDivSmall(i, e, null);
+            } else n = o.__absoluteDivLarge(i, _, !0, !1);
+
+            return n.sign = t, n.__trim();
           }
         }, {
           key: "remainder",
-          value: function e(i, t) {
-            if (0 === t.length) throw new RangeError("Division by zero");
-            if (0 > l.__absoluteCompare(i, t)) return i;
+          value: function remainder(i, _) {
+            if (0 === _.length) throw new RangeError("Division by zero");
+            if (0 > o.__absoluteCompare(i, _)) return i;
 
-            var _ = t.__unsignedDigit(0);
+            var t = _.__unsignedDigit(0);
 
-            if (1 === t.length && 65535 >= _) {
-              if (1 === _) return l.__zero();
+            if (1 === _.length && 32767 >= t) {
+              if (1 === t) return o.__zero();
 
-              var n = l.__absoluteModSmall(i, _);
+              var _9 = o.__absoluteModSmall(i, t);
 
-              return 0 === n ? l.__zero() : l.__oneDigit(n, i.sign);
+              return 0 === _9 ? o.__zero() : o.__oneDigit(_9, i.sign);
             }
 
-            var e = l.__absoluteDivLarge(i, t, !1, !0);
+            var e = o.__absoluteDivLarge(i, _, !1, !0);
 
             return e.sign = i.sign, e.__trim();
           }
         }, {
           key: "add",
-          value: function value(e, i) {
-            var t = e.sign;
-            return t === i.sign ? l.__absoluteAdd(e, i, t) : 0 <= l.__absoluteCompare(e, i) ? l.__absoluteSub(e, i, t) : l.__absoluteSub(i, e, !t);
+          value: function add(i, _) {
+            var t = i.sign;
+            return t === _.sign ? o.__absoluteAdd(i, _, t) : 0 <= o.__absoluteCompare(i, _) ? o.__absoluteSub(i, _, t) : o.__absoluteSub(_, i, !t);
           }
         }, {
           key: "subtract",
-          value: function value(e, i) {
-            var t = e.sign;
-            return t === i.sign ? 0 <= l.__absoluteCompare(e, i) ? l.__absoluteSub(e, i, t) : l.__absoluteSub(i, e, !t) : l.__absoluteAdd(e, i, t);
+          value: function subtract(i, _) {
+            var t = i.sign;
+            return t === _.sign ? 0 <= o.__absoluteCompare(i, _) ? o.__absoluteSub(i, _, t) : o.__absoluteSub(_, i, !t) : o.__absoluteAdd(i, _, t);
           }
         }, {
           key: "leftShift",
-          value: function value(e, i) {
-            return 0 === i.length || 0 === e.length ? e : i.sign ? l.__rightShiftByAbsolute(e, i) : l.__leftShiftByAbsolute(e, i);
+          value: function leftShift(i, _) {
+            return 0 === _.length || 0 === i.length ? i : _.sign ? o.__rightShiftByAbsolute(i, _) : o.__leftShiftByAbsolute(i, _);
           }
         }, {
           key: "signedRightShift",
-          value: function value(e, i) {
-            return 0 === i.length || 0 === e.length ? e : i.sign ? l.__leftShiftByAbsolute(e, i) : l.__rightShiftByAbsolute(e, i);
+          value: function signedRightShift(i, _) {
+            return 0 === _.length || 0 === i.length ? i : _.sign ? o.__leftShiftByAbsolute(i, _) : o.__rightShiftByAbsolute(i, _);
           }
         }, {
           key: "unsignedRightShift",
-          value: function value() {
+          value: function unsignedRightShift() {
             throw new TypeError("BigInts have no unsigned right shift; use >> instead");
           }
         }, {
           key: "lessThan",
-          value: function value(e, i) {
-            return 0 > l.__compareToBigInt(e, i);
+          value: function lessThan(i, _) {
+            return 0 > o.__compareToBigInt(i, _);
           }
         }, {
           key: "lessThanOrEqual",
-          value: function value(e, i) {
-            return 0 >= l.__compareToBigInt(e, i);
+          value: function lessThanOrEqual(i, _) {
+            return 0 >= o.__compareToBigInt(i, _);
           }
         }, {
           key: "greaterThan",
-          value: function value(e, i) {
-            return 0 < l.__compareToBigInt(e, i);
+          value: function greaterThan(i, _) {
+            return 0 < o.__compareToBigInt(i, _);
           }
         }, {
           key: "greaterThanOrEqual",
-          value: function value(e, i) {
-            return 0 <= l.__compareToBigInt(e, i);
+          value: function greaterThanOrEqual(i, _) {
+            return 0 <= o.__compareToBigInt(i, _);
           }
         }, {
           key: "equal",
-          value: function value(e, t) {
-            if (e.sign !== t.sign) return !1;
-            if (e.length !== t.length) return !1;
+          value: function equal(_, t) {
+            if (_.sign !== t.sign) return !1;
+            if (_.length !== t.length) return !1;
 
-            for (var _ = 0; _ < e.length; _++) {
-              if (e.__digit(_) !== t.__digit(_)) return !1;
+            for (var _e4 = 0; _e4 < _.length; _e4++) {
+              if (_.__digit(_e4) !== t.__digit(_e4)) return !1;
             }
 
             return !0;
           }
         }, {
+          key: "notEqual",
+          value: function notEqual(i, _) {
+            return !o.equal(i, _);
+          }
+        }, {
           key: "bitwiseAnd",
-          value: function value(e, i) {
-            if (!e.sign && !i.sign) return l.__absoluteAnd(e, i).__trim();
+          value: function bitwiseAnd(i, _) {
+            var _ref;
 
-            if (e.sign && i.sign) {
-              var t = a(e.length, i.length) + 1,
-                  _ = l.__absoluteSubOne(e, t),
-                  n = l.__absoluteSubOne(i);
+            if (!i.sign && !_.sign) return o.__absoluteAnd(i, _).__trim();
 
-              return _ = l.__absoluteOr(_, n, _), l.__absoluteAddOne(_, !0, _).__trim();
+            if (i.sign && _.sign) {
+              var _t3 = e(i.length, _.length) + 1;
+
+              var n = o.__absoluteSubOne(i, _t3);
+
+              var _g5 = o.__absoluteSubOne(_);
+
+              return n = o.__absoluteOr(n, _g5, n), o.__absoluteAddOne(n, !0, n).__trim();
             }
 
-            if (e.sign) {
-              var g = [i, e];
-              e = g[0], i = g[1];
-            }
-
-            return l.__absoluteAndNot(e, l.__absoluteSubOne(i)).__trim();
+            return i.sign && (_ref = [_, i], i = _ref[0], _ = _ref[1], _ref), o.__absoluteAndNot(i, o.__absoluteSubOne(_)).__trim();
           }
         }, {
           key: "bitwiseXor",
-          value: function value(e, i) {
-            if (!e.sign && !i.sign) return l.__absoluteXor(e, i).__trim();
+          value: function bitwiseXor(i, _) {
+            var _ref2;
 
-            if (e.sign && i.sign) {
-              var t = a(e.length, i.length),
-                  _ = l.__absoluteSubOne(e, t),
-                  n = l.__absoluteSubOne(i);
+            if (!i.sign && !_.sign) return o.__absoluteXor(i, _).__trim();
 
-              return l.__absoluteXor(_, n, _).__trim();
+            if (i.sign && _.sign) {
+              var _t4 = e(i.length, _.length),
+                  _n2 = o.__absoluteSubOne(i, _t4),
+                  _g6 = o.__absoluteSubOne(_);
+
+              return o.__absoluteXor(_n2, _g6, _n2).__trim();
             }
 
-            var g = a(e.length, i.length) + 1;
+            var t = e(i.length, _.length) + 1;
+            i.sign && (_ref2 = [_, i], i = _ref2[0], _ = _ref2[1], _ref2);
 
-            if (e.sign) {
-              var o = [i, e];
-              e = o[0], i = o[1];
-            }
+            var n = o.__absoluteSubOne(_, t);
 
-            var s = l.__absoluteSubOne(i, g);
-
-            return s = l.__absoluteXor(s, e, s), l.__absoluteAddOne(s, !0, s).__trim();
+            return n = o.__absoluteXor(n, i, n), o.__absoluteAddOne(n, !0, n).__trim();
           }
         }, {
           key: "bitwiseOr",
-          value: function value(e, i) {
-            var t = a(e.length, i.length);
-            if (!e.sign && !i.sign) return l.__absoluteOr(e, i).__trim();
+          value: function bitwiseOr(i, _) {
+            var _ref3;
 
-            if (e.sign && i.sign) {
-              var _ = l.__absoluteSubOne(e, t),
-                  n = l.__absoluteSubOne(i);
+            var t = e(i.length, _.length);
+            if (!i.sign && !_.sign) return o.__absoluteOr(i, _).__trim();
 
-              return _ = l.__absoluteAnd(_, n, _), l.__absoluteAddOne(_, !0, _).__trim();
+            if (i.sign && _.sign) {
+              var _e5 = o.__absoluteSubOne(i, t);
+
+              var _n3 = o.__absoluteSubOne(_);
+
+              return _e5 = o.__absoluteAnd(_e5, _n3, _e5), o.__absoluteAddOne(_e5, !0, _e5).__trim();
             }
 
-            if (e.sign) {
-              var g = [i, e];
-              e = g[0], i = g[1];
+            i.sign && (_ref3 = [_, i], i = _ref3[0], _ = _ref3[1], _ref3);
+
+            var n = o.__absoluteSubOne(_, t);
+
+            return n = o.__absoluteAndNot(n, i, n), o.__absoluteAddOne(n, !0, n).__trim();
+          }
+        }, {
+          key: "asIntN",
+          value: function asIntN(_, t) {
+            if (0 === t.length) return t;
+            if (_ = g(_), 0 > _) throw new RangeError("Invalid value: not (convertible to) a safe integer");
+            if (0 === _) return o.__zero();
+            if (_ >= o.__kMaxLengthBits) return t;
+            var e = 0 | (_ + 29) / 30;
+            if (t.length < e) return t;
+
+            var s = t.__unsignedDigit(e - 1),
+                l = 1 << (_ - 1) % 30;
+
+            if (t.length === e && s < l) return t;
+            if (!((s & l) === l)) return o.__truncateToNBits(_, t);
+            if (!t.sign) return o.__truncateAndSubFromPowerOfTwo(_, t, !0);
+
+            if (0 == (s & l - 1)) {
+              for (var n = e - 2; 0 <= n; n--) {
+                if (0 !== t.__digit(n)) return o.__truncateAndSubFromPowerOfTwo(_, t, !1);
+              }
+
+              return t.length === e && s === l ? t : o.__truncateToNBits(_, t);
             }
 
-            var o = l.__absoluteSubOne(i, t);
+            return o.__truncateAndSubFromPowerOfTwo(_, t, !1);
+          }
+        }, {
+          key: "asUintN",
+          value: function asUintN(i, _) {
+            if (0 === _.length) return _;
+            if (i = g(i), 0 > i) throw new RangeError("Invalid value: not (convertible to) a safe integer");
+            if (0 === i) return o.__zero();
 
-            return o = l.__absoluteAndNot(o, e, o), l.__absoluteAddOne(o, !0, o).__trim();
+            if (_.sign) {
+              if (i > o.__kMaxLengthBits) throw new RangeError("BigInt too big");
+              return o.__truncateAndSubFromPowerOfTwo(i, _, !1);
+            }
+
+            if (i >= o.__kMaxLengthBits) return _;
+            var t = 0 | (i + 29) / 30;
+            if (_.length < t) return _;
+            var e = i % 30;
+
+            if (_.length == t) {
+              if (0 === e) return _;
+
+              var _i8 = _.__digit(t - 1);
+
+              if (0 == _i8 >>> e) return _;
+            }
+
+            return o.__truncateToNBits(i, _);
           }
         }, {
           key: "ADD",
-          value: function value(e, i) {
-            if (e = l.__toPrimitive(e), i = l.__toPrimitive(i), "string" == typeof e) return "string" != typeof i && (i = i.toString()), e + i;
-            if ("string" == typeof i) return e.toString() + i;
-            if (e = l.__toNumeric(e), i = l.__toNumeric(i), l.__isBigInt(e) && l.__isBigInt(i)) return l.add(e, i);
-            if ("number" == typeof e && "number" == typeof i) return e + i;
+          value: function ADD(i, _) {
+            if (i = o.__toPrimitive(i), _ = o.__toPrimitive(_), "string" == typeof i) return "string" != typeof _ && (_ = _.toString()), i + _;
+            if ("string" == typeof _) return i.toString() + _;
+            if (i = o.__toNumeric(i), _ = o.__toNumeric(_), o.__isBigInt(i) && o.__isBigInt(_)) return o.add(i, _);
+            if ("number" == typeof i && "number" == typeof _) return i + _;
             throw new TypeError("Cannot mix BigInt and other types, use explicit conversions");
           }
         }, {
           key: "LT",
-          value: function value(e, i) {
-            return l.__compare(e, i, 0);
+          value: function LT(i, _) {
+            return o.__compare(i, _, 0);
           }
         }, {
           key: "LE",
-          value: function value(e, i) {
-            return l.__compare(e, i, 1);
+          value: function LE(i, _) {
+            return o.__compare(i, _, 1);
           }
         }, {
           key: "GT",
-          value: function value(e, i) {
-            return l.__compare(e, i, 2);
+          value: function GT(i, _) {
+            return o.__compare(i, _, 2);
           }
         }, {
           key: "GE",
-          value: function value(e, i) {
-            return l.__compare(e, i, 3);
+          value: function GE(i, _) {
+            return o.__compare(i, _, 3);
           }
         }, {
           key: "EQ",
-          value: function value(i, t) {
+          value: function EQ(i, _) {
             for (;;) {
-              if (l.__isBigInt(i)) return l.__isBigInt(t) ? l.equal(i, t) : l.EQ(t, i);
+              if (o.__isBigInt(i)) return o.__isBigInt(_) ? o.equal(i, _) : o.EQ(_, i);
 
               if ("number" == typeof i) {
-                if (l.__isBigInt(t)) return l.__equalToNumber(t, i);
-                if ("object" !== e(t)) return i == t;
-                t = l.__toPrimitive(t);
+                if (o.__isBigInt(_)) return o.__equalToNumber(_, i);
+                if ("object" != _typeof(_)) return i == _;
+                _ = o.__toPrimitive(_);
               } else if ("string" == typeof i) {
-                if (l.__isBigInt(t)) return i = l.__fromString(i), null !== i && l.equal(i, t);
-                if ("object" !== e(t)) return i == t;
-                t = l.__toPrimitive(t);
+                if (o.__isBigInt(_)) return i = o.__fromString(i), null !== i && o.equal(i, _);
+                if ("object" != _typeof(_)) return i == _;
+                _ = o.__toPrimitive(_);
               } else if ("boolean" == typeof i) {
-                if (l.__isBigInt(t)) return l.__equalToNumber(t, +i);
-                if ("object" !== e(t)) return i == t;
-                t = l.__toPrimitive(t);
-              } else if ("symbol" === e(i)) {
-                if (l.__isBigInt(t)) return !1;
-                if ("object" !== e(t)) return i == t;
-                t = l.__toPrimitive(t);
-              } else if ("object" === e(i)) {
-                if ("object" === e(t) && t.constructor !== l) return i == t;
-                i = l.__toPrimitive(i);
-              } else return i == t;
+                if (o.__isBigInt(_)) return o.__equalToNumber(_, +i);
+                if ("object" != _typeof(_)) return i == _;
+                _ = o.__toPrimitive(_);
+              } else if ("symbol" == _typeof(i)) {
+                if (o.__isBigInt(_)) return !1;
+                if ("object" != _typeof(_)) return i == _;
+                _ = o.__toPrimitive(_);
+              } else if ("object" == _typeof(i)) {
+                if ("object" == _typeof(_) && _.constructor !== o) return i == _;
+                i = o.__toPrimitive(i);
+              } else return i == _;
             }
+          }
+        }, {
+          key: "NE",
+          value: function NE(i, _) {
+            return !o.EQ(i, _);
           }
         }, {
           key: "__zero",
-          value: function value() {
-            return new l(0, !1);
+          value: function __zero() {
+            return new o(0, !1);
           }
         }, {
           key: "__oneDigit",
-          value: function value(e, i) {
-            var t = new l(1, i);
-            return t.__setDigit(0, e), t;
+          value: function __oneDigit(i, _) {
+            var t = new o(1, _);
+            return t.__setDigit(0, i), t;
           }
         }, {
           key: "__decideRounding",
-          value: function value(e, i, t, _) {
-            if (0 < i) return -1;
+          value: function __decideRounding(i, _, t, e) {
+            if (0 < _) return -1;
             var n;
-            if (0 > i) n = -i - 1;else {
+            if (0 > _) n = -_ - 1;else {
               if (0 === t) return -1;
-              t--, _ = e.__digit(t), n = 31;
+              t--, e = i.__digit(t), n = 29;
             }
             var g = 1 << n;
-            if (0 == (_ & g)) return -1;
-            if (g -= 1, 0 != (_ & g)) return 1;
+            if (0 == (e & g)) return -1;
+            if (g -= 1, 0 != (e & g)) return 1;
 
             for (; 0 < t;) {
-              if (t--, 0 !== e.__digit(t)) return 1;
+              if (t--, 0 !== i.__digit(t)) return 1;
             }
 
             return 0;
           }
         }, {
           key: "__fromDouble",
-          value: function value(e) {
-            l.__kBitConversionDouble[0] = e;
+          value: function __fromDouble(i) {
+            o.__kBitConversionDouble[0] = i;
 
-            var i,
-                t = 2047 & l.__kBitConversionInts[1] >>> 20,
-                _ = t - 1023,
-                n = (_ >>> 5) + 1,
-                g = new l(n, 0 > e),
-                o = 1048575 & l.__kBitConversionInts[1] | 1048576,
-                a = l.__kBitConversionInts[0],
-                s = 20,
-                u = 31 & _,
-                r = 0;
+            var _ = 2047 & o.__kBitConversionInts[1] >>> 20,
+                t = _ - 1023,
+                e = (0 | t / 30) + 1,
+                n = new o(e, 0 > i);
 
-            if (u < s) {
-              var d = s - u;
-              r = d + 32, i = o >>> d, o = o << 32 - d | a >>> d, a <<= 32 - d;
-            } else if (u === s) r = 32, i = o, o = a;else {
-              var h = u - s;
-              r = 32 - h, i = o << h | a >>> 32 - h, o = a << h;
+            var g = 1048575 & o.__kBitConversionInts[1] | 1048576,
+                s = o.__kBitConversionInts[0];
+            var l = 20,
+                r = t % 30;
+            var a,
+                u = 0;
+
+            if (20 > r) {
+              var _i9 = l - r;
+
+              u = _i9 + 32, a = g >>> _i9, g = g << 32 - _i9 | s >>> _i9, s <<= 32 - _i9;
+            } else if (20 === r) u = 32, a = g, g = s, s = 0;else {
+              var _i10 = r - l;
+
+              u = 32 - _i10, a = g << _i10 | s >>> 32 - _i10, g = s << _i10, s = 0;
             }
 
-            g.__setDigit(n - 1, i);
+            n.__setDigit(e - 1, a);
 
-            for (var b = n - 2; 0 <= b; b--) {
-              0 < r ? (r -= 32, i = o, o = a) : i = 0, g.__setDigit(b, i);
+            for (var _10 = e - 2; 0 <= _10; _10--) {
+              0 < u ? (u -= 30, a = g >>> 2, g = g << 30 | s >>> 2, s <<= 30) : a = 0, n.__setDigit(_10, a);
             }
 
-            return g.__trim();
+            return n.__trim();
           }
         }, {
           key: "__isWhitespace",
-          value: function value(e) {
-            return !!(13 >= e && 9 <= e) || (159 >= e ? 32 == e : 131071 >= e ? 160 == e || 5760 == e : 196607 >= e ? (e &= 131071, 10 >= e || 40 == e || 41 == e || 47 == e || 95 == e || 4096 == e) : 65279 == e);
+          value: function __isWhitespace(i) {
+            return !!(13 >= i && 9 <= i) || (159 >= i ? 32 == i : 131071 >= i ? 160 == i || 5760 == i : 196607 >= i ? (i &= 131071, 10 >= i || 40 == i || 41 == i || 47 == i || 95 == i || 4096 == i) : 65279 == i);
           }
         }, {
           key: "__fromString",
-          value: function value(e) {
-            var i = 1 < arguments.length && void 0 !== arguments[1] ? arguments[1] : 0,
-                t = 0,
-                _ = e.length,
-                n = 0;
-            if (n === _) return l.__zero();
+          value: function __fromString(i) {
+            var _ = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 0;
 
-            for (var g = e.charCodeAt(n); l.__isWhitespace(g);) {
-              if (++n === _) return l.__zero();
-              g = e.charCodeAt(n);
+            var t = 0;
+            var e = i.length;
+            var n = 0;
+            if (n === e) return o.__zero();
+            var g = i.charCodeAt(n);
+
+            for (; o.__isWhitespace(g);) {
+              if (++n === e) return o.__zero();
+              g = i.charCodeAt(n);
             }
 
             if (43 === g) {
-              if (++n === _) return null;
-              g = e.charCodeAt(n), t = 1;
+              if (++n === e) return null;
+              g = i.charCodeAt(n), t = 1;
             } else if (45 === g) {
-              if (++n === _) return null;
-              g = e.charCodeAt(n), t = -1;
+              if (++n === e) return null;
+              g = i.charCodeAt(n), t = -1;
             }
 
-            if (0 === i) {
-              if (i = 10, 48 === g) {
-                if (++n === _) return l.__zero();
+            if (0 === _) {
+              if (_ = 10, 48 === g) {
+                if (++n === e) return o.__zero();
 
-                if (g = e.charCodeAt(n), 88 === g || 120 === g) {
-                  if (i = 16, ++n === _) return null;
-                  g = e.charCodeAt(n);
+                if (g = i.charCodeAt(n), 88 === g || 120 === g) {
+                  if (_ = 16, ++n === e) return null;
+                  g = i.charCodeAt(n);
                 } else if (79 === g || 111 === g) {
-                  if (i = 8, ++n === _) return null;
-                  g = e.charCodeAt(n);
+                  if (_ = 8, ++n === e) return null;
+                  g = i.charCodeAt(n);
                 } else if (66 === g || 98 === g) {
-                  if (i = 2, ++n === _) return null;
-                  g = e.charCodeAt(n);
+                  if (_ = 2, ++n === e) return null;
+                  g = i.charCodeAt(n);
                 }
               }
-            } else if (16 === i && 48 === g) {
-              if (++n === _) return l.__zero();
+            } else if (16 === _ && 48 === g) {
+              if (++n === e) return o.__zero();
 
-              if (g = e.charCodeAt(n), 88 === g || 120 === g) {
-                if (++n === _) return null;
-                g = e.charCodeAt(n);
+              if (g = i.charCodeAt(n), 88 === g || 120 === g) {
+                if (++n === e) return null;
+                g = i.charCodeAt(n);
               }
             }
+
+            if (0 != t && 10 !== _) return null;
 
             for (; 48 === g;) {
-              if (++n === _) return l.__zero();
-              g = e.charCodeAt(n);
+              if (++n === e) return o.__zero();
+              g = i.charCodeAt(n);
             }
 
-            var o = _ - n,
-                a = l.__kMaxBitsPerChar[i],
-                s = l.__kBitsPerCharTableMultiplier - 1;
-            if (o > 1073741824 / a) return null;
-            var u = a * o + s >>> l.__kBitsPerCharTableShift,
-                r = new l(u + 31 >>> 5, !1),
-                h = 10 > i ? i : 10,
-                b = 10 < i ? i - 10 : 0;
+            var s = e - n;
+            var l = o.__kMaxBitsPerChar[_],
+                r = o.__kBitsPerCharTableMultiplier - 1;
+            if (s > 1073741824 / l) return null;
+            var a = l * s + r >>> o.__kBitsPerCharTableShift,
+                u = new o(0 | (a + 29) / 30, !1),
+                h = 10 > _ ? _ : 10,
+                b = 10 < _ ? _ - 10 : 0;
 
-            if (0 == (i & i - 1)) {
-              a >>= l.__kBitsPerCharTableShift;
-              var c = [],
-                  v = [],
-                  y = !1;
+            if (0 == (_ & _ - 1)) {
+              l >>= o.__kBitsPerCharTableShift;
+              var _11 = [],
+                  _t5 = [];
+
+              var _s3 = !1;
 
               do {
-                for (var f, D = 0, k = 0;;) {
-                  if (f = void 0, g - 48 >>> 0 < h) f = g - 48;else if ((32 | g) - 97 >>> 0 < b) f = (32 | g) - 87;else {
-                    y = !0;
+                var _o14 = 0,
+                    _r = 0;
+
+                for (;;) {
+                  var _12 = void 0;
+
+                  if (g - 48 >>> 0 < h) _12 = g - 48;else if ((32 | g) - 97 >>> 0 < b) _12 = (32 | g) - 87;else {
+                    _s3 = !0;
                     break;
                   }
 
-                  if (k += a, D = D << a | f, ++n === _) {
-                    y = !0;
+                  if (_r += l, _o14 = _o14 << l | _12, ++n === e) {
+                    _s3 = !0;
                     break;
                   }
 
-                  if (g = e.charCodeAt(n), 32 < k + a) break;
+                  if (g = i.charCodeAt(n), 30 < _r + l) break;
                 }
 
-                c.push(D), v.push(k);
-              } while (!y);
+                _11.push(_o14), _t5.push(_r);
+              } while (!_s3);
 
-              l.__fillFromParts(r, c, v);
+              o.__fillFromParts(u, _11, _t5);
             } else {
-              r.__initializeDigits();
+              u.__initializeDigits();
 
-              var p = !1,
-                  B = 0;
+              var _t6 = !1,
+                  _s4 = 0;
 
               do {
-                for (var S, C = 0, A = 1;;) {
-                  if (S = void 0, g - 48 >>> 0 < h) S = g - 48;else if ((32 | g) - 97 >>> 0 < b) S = (32 | g) - 87;else {
-                    p = !0;
-                    break;
-                  }
-                  var I = A * i;
-                  if (4294967295 < I) break;
+                var _a = 0,
+                    D = 1;
 
-                  if (A = I, C = C * i + S, B++, ++n === _) {
-                    p = !0;
+                for (;;) {
+                  var _o15 = void 0;
+
+                  if (g - 48 >>> 0 < h) _o15 = g - 48;else if ((32 | g) - 97 >>> 0 < b) _o15 = (32 | g) - 87;else {
+                    _t6 = !0;
                     break;
                   }
 
-                  g = e.charCodeAt(n);
+                  var _l2 = D * _;
+
+                  if (1073741823 < _l2) break;
+
+                  if (D = _l2, _a = _a * _ + _o15, _s4++, ++n === e) {
+                    _t6 = !0;
+                    break;
+                  }
+
+                  g = i.charCodeAt(n);
                 }
 
-                s = 32 * l.__kBitsPerCharTableMultiplier - 1;
-                var m = a * B + s >>> l.__kBitsPerCharTableShift + 5;
+                r = 30 * o.__kBitsPerCharTableMultiplier - 1;
+                var c = 0 | (l * _s4 + r >>> o.__kBitsPerCharTableShift) / 30;
 
-                r.__inplaceMultiplyAdd(A, C, m);
-              } while (!p);
+                u.__inplaceMultiplyAdd(D, _a, c);
+              } while (!_t6);
             }
 
-            for (; n !== _;) {
-              if (!l.__isWhitespace(g)) return null;
-              g = e.charCodeAt(n++);
+            if (n !== e) {
+              if (!o.__isWhitespace(g)) return null;
+
+              for (n++; n < e; n++) {
+                if (g = i.charCodeAt(n), !o.__isWhitespace(g)) return null;
+              }
             }
 
-            return 0 !== t && 10 !== i ? null : (r.sign = -1 === t, r.__trim());
+            return u.sign = -1 == t, u.__trim();
           }
         }, {
           key: "__fillFromParts",
-          value: function value(e, t, _) {
-            for (var n = 0, g = 0, l = 0, o = t.length - 1; 0 <= o; o--) {
-              var a = t[o],
-                  s = _[o];
-              g |= a << l, l += s, 32 === l ? (e.__setDigit(n++, g), l = 0, g = 0) : 32 < l && (e.__setDigit(n++, g), l -= 32, g = a >>> s - l);
+          value: function __fillFromParts(_, t, e) {
+            var n = 0,
+                g = 0,
+                _o3 = 0;
+
+            for (var s = t.length - 1; 0 <= s; s--) {
+              var _i11 = t[s],
+                  l = e[s];
+              g |= _i11 << _o3, _o3 += l, 30 === _o3 ? (_.__setDigit(n++, g), _o3 = 0, g = 0) : 30 < _o3 && (_.__setDigit(n++, 1073741823 & g), _o3 -= 30, g = _i11 >>> l - _o3);
             }
 
             if (0 !== g) {
-              if (n >= e.length) throw new Error("implementation bug");
+              if (n >= _.length) throw new Error("implementation bug");
 
-              e.__setDigit(n++, g);
+              _.__setDigit(n++, g);
             }
 
-            for (; n < e.length; n++) {
-              e.__setDigit(n, 0);
+            for (; n < _.length; n++) {
+              _.__setDigit(n, 0);
             }
           }
         }, {
           key: "__toStringBasePowerOfTwo",
-          value: function value(e, t) {
-            var _ = e.length,
-                n = t - 1;
-            n = (85 & n >>> 1) + (85 & n), n = (51 & n >>> 2) + (51 & n), n = (15 & n >>> 4) + (15 & n);
+          value: function __toStringBasePowerOfTwo(_, i) {
+            var t = _.length;
+            var e = i - 1;
+            e = (85 & e >>> 1) + (85 & e), e = (51 & e >>> 2) + (51 & e), e = (15 & e >>> 4) + (15 & e);
 
-            var g = n,
-                o = t - 1,
-                a = e.__digit(_ - 1),
-                s = u(a),
-                r = 0 | (32 * _ - s + g - 1) / g;
+            var n = e,
+                g = i - 1,
+                s = _.__digit(t - 1),
+                l = o.__clz30(s);
 
-            if (e.sign && r++, 268435456 < r) throw new Error("string too long");
+            var r = 0 | (30 * t - l + n - 1) / n;
+            if (_.sign && r++, 268435456 < r) throw new Error("string too long");
+            var a = Array(r);
+            var u = r - 1,
+                d = 0,
+                h = 0;
 
-            for (var d = Array(r), h = r - 1, b = 0, m = 0, c = 0; c < _ - 1; c++) {
-              var v = e.__digit(c),
-                  y = (b | v << m) & o;
+            for (var _e6 = 0; _e6 < t - 1; _e6++) {
+              var _i12 = _.__digit(_e6),
+                  _t7 = (d | _i12 << h) & g;
 
-              d[h--] = l.__kConversionChars[y];
-              var f = g - m;
+              a[u--] = o.__kConversionChars[_t7];
 
-              for (b = v >>> f, m = 32 - f; m >= g;) {
-                d[h--] = l.__kConversionChars[b & o], b >>>= g, m -= g;
+              var _s5 = n - h;
+
+              for (d = _i12 >>> _s5, h = 30 - _s5; h >= n;) {
+                a[u--] = o.__kConversionChars[d & g], d >>>= n, h -= n;
               }
             }
 
-            var D = (b | a << m) & o;
+            var m = (d | s << h) & g;
 
-            for (d[h--] = l.__kConversionChars[D], b = a >>> g - m; 0 !== b;) {
-              d[h--] = l.__kConversionChars[b & o], b >>>= g;
+            for (a[u--] = o.__kConversionChars[m], d = s >>> n - h; 0 !== d;) {
+              a[u--] = o.__kConversionChars[d & g], d >>>= n;
             }
 
-            if (e.sign && (d[h--] = "-"), -1 !== h) throw new Error("implementation bug");
-            return d.join("");
+            if (_.sign && (a[u--] = "-"), -1 != u) throw new Error("implementation bug");
+            return a.join("");
           }
         }, {
           key: "__toStringGeneric",
-          value: function value(e, t, _) {
-            var n = e.length;
-            if (0 === n) return "";
+          value: function __toStringGeneric(_, i, t) {
+            var e = _.length;
+            if (0 === e) return "";
 
-            if (1 === n) {
-              var g = e.__unsignedDigit(0).toString(t);
+            if (1 === e) {
+              var _e7 = _.__unsignedDigit(0).toString(i);
 
-              return !1 === _ && e.sign && (g = "-" + g), g;
+              return !1 === t && _.sign && (_e7 = "-" + _e7), _e7;
             }
 
-            var o = 32 * n - u(e.__digit(n - 1)),
-                a = l.__kMaxBitsPerChar[t],
-                s = a - 1,
-                r = o * l.__kBitsPerCharTableMultiplier;
-            r += s - 1, r = 0 | r / s;
+            var n = 30 * e - o.__clz30(_.__digit(e - 1)),
+                g = o.__kMaxBitsPerChar[i],
+                s = g - 1;
 
-            var d,
-                h,
-                b = r + 1 >> 1,
-                m = l.exponentiate(l.__oneDigit(t, !1), l.__oneDigit(b, !1)),
-                c = m.__unsignedDigit(0);
+            var l = n * o.__kBitsPerCharTableMultiplier;
+            l += s - 1, l = 0 | l / s;
+            var r = l + 1 >> 1,
+                a = o.exponentiate(o.__oneDigit(i, !1), o.__oneDigit(r, !1));
+            var u, d;
 
-            if (1 === m.length && 65535 >= c) {
-              d = new l(e.length, !1), d.__initializeDigits();
+            var h = a.__unsignedDigit(0);
 
-              for (var v, y = 0, f = 2 * e.length - 1; 0 <= f; f--) {
-                v = y << 16 | e.__halfDigit(f), d.__setHalfDigit(f, 0 | v / c), y = 0 | v % c;
+            if (1 === a.length && 32767 >= h) {
+              u = new o(_.length, !1), u.__initializeDigits();
+              var _t8 = 0;
+
+              for (var _e8 = 2 * _.length - 1; 0 <= _e8; _e8--) {
+                var _i13 = _t8 << 15 | _.__halfDigit(_e8);
+
+                u.__setHalfDigit(_e8, 0 | _i13 / h), _t8 = 0 | _i13 % h;
               }
 
-              h = y.toString(t);
+              d = _t8.toString(i);
             } else {
-              var D = l.__absoluteDivLarge(e, m, !0, !0);
+              var _t9 = o.__absoluteDivLarge(_, a, !0, !0);
 
-              d = D.quotient;
+              u = _t9.quotient;
 
-              var k = D.remainder.__trim();
+              var _e9 = _t9.remainder.__trim();
 
-              h = l.__toStringGeneric(k, t, !0);
+              d = o.__toStringGeneric(_e9, i, !0);
             }
 
-            d.__trim();
+            u.__trim();
 
-            for (var p = l.__toStringGeneric(d, t, !0); h.length < b;) {
-              h = "0" + h;
+            var m = o.__toStringGeneric(u, i, !0);
+
+            for (; d.length < r;) {
+              d = "0" + d;
             }
 
-            return !1 === _ && e.sign && (p = "-" + p), p + h;
+            return !1 === t && _.sign && (m = "-" + m), m + d;
           }
         }, {
           key: "__unequalSign",
-          value: function value(e) {
-            return e ? -1 : 1;
+          value: function __unequalSign(i) {
+            return i ? -1 : 1;
           }
         }, {
           key: "__absoluteGreater",
-          value: function value(e) {
-            return e ? -1 : 1;
+          value: function __absoluteGreater(i) {
+            return i ? -1 : 1;
           }
         }, {
           key: "__absoluteLess",
-          value: function value(e) {
-            return e ? 1 : -1;
+          value: function __absoluteLess(i) {
+            return i ? 1 : -1;
           }
         }, {
           key: "__compareToBigInt",
-          value: function value(e, i) {
-            var t = e.sign;
-            if (t !== i.sign) return l.__unequalSign(t);
+          value: function __compareToBigInt(i, _) {
+            var t = i.sign;
+            if (t !== _.sign) return o.__unequalSign(t);
 
-            var _ = l.__absoluteCompare(e, i);
+            var e = o.__absoluteCompare(i, _);
 
-            return 0 < _ ? l.__absoluteGreater(t) : 0 > _ ? l.__absoluteLess(t) : 0;
+            return 0 < e ? o.__absoluteGreater(t) : 0 > e ? o.__absoluteLess(t) : 0;
           }
         }, {
           key: "__compareToNumber",
-          value: function value(e, i) {
-            if (!0 | i) {
-              var t = e.sign,
-                  _ = 0 > i;
+          value: function __compareToNumber(i, _) {
+            if (o.__isOneDigitInt(_)) {
+              var _e10 = i.sign,
+                  n = 0 > _;
+              if (_e10 !== n) return o.__unequalSign(_e10);
 
-              if (t !== _) return l.__unequalSign(t);
-
-              if (0 === e.length) {
-                if (_) throw new Error("implementation bug");
-                return 0 === i ? 0 : -1;
+              if (0 === i.length) {
+                if (n) throw new Error("implementation bug");
+                return 0 === _ ? 0 : -1;
               }
 
-              if (1 < e.length) return l.__absoluteGreater(t);
+              if (1 < i.length) return o.__absoluteGreater(_e10);
 
-              var n = o(i),
-                  g = e.__unsignedDigit(0);
+              var _g7 = t(_),
+                  s = i.__unsignedDigit(0);
 
-              return g > n ? l.__absoluteGreater(t) : g < n ? l.__absoluteLess(t) : 0;
+              return s > _g7 ? o.__absoluteGreater(_e10) : s < _g7 ? o.__absoluteLess(_e10) : 0;
             }
 
-            return l.__compareToDouble(e, i);
+            return o.__compareToDouble(i, _);
           }
         }, {
           key: "__compareToDouble",
-          value: function value(e, i) {
-            if (i !== i) return i;
-            if (i === 1 / 0) return -1;
-            if (i === -Infinity) return 1;
-            var t = e.sign;
-            if (t !== 0 > i) return l.__unequalSign(t);
-            if (0 === i) throw new Error("implementation bug: should be handled elsewhere");
-            if (0 === e.length) return -1;
-            l.__kBitConversionDouble[0] = i;
+          value: function __compareToDouble(i, _) {
+            if (_ !== _) return _;
+            if (_ === 1 / 0) return -1;
+            if (_ === -Infinity) return 1;
+            var t = i.sign;
+            if (t !== 0 > _) return o.__unequalSign(t);
+            if (0 === _) throw new Error("implementation bug: should be handled elsewhere");
+            if (0 === i.length) return -1;
+            o.__kBitConversionDouble[0] = _;
+            var e = 2047 & o.__kBitConversionInts[1] >>> 20;
+            if (2047 == e) throw new Error("implementation bug: handled elsewhere");
+            var n = e - 1023;
+            if (0 > n) return o.__absoluteGreater(t);
+            var g = i.length;
 
-            var _ = 2047 & l.__kBitConversionInts[1] >>> 20;
+            var s = i.__digit(g - 1);
 
-            if (2047 == _) throw new Error("implementation bug: handled elsewhere");
-            var n = _ - 1023;
-            if (0 > n) return l.__absoluteGreater(t);
+            var l = o.__clz30(s),
+                r = 30 * g - l,
+                a = n + 1;
 
-            var g = e.length,
-                o = e.__digit(g - 1),
-                a = u(o),
-                s = 32 * g - a,
-                r = n + 1;
+            if (r < a) return o.__absoluteLess(t);
+            if (r > a) return o.__absoluteGreater(t);
+            var u = 1048576 | 1048575 & o.__kBitConversionInts[1],
+                d = o.__kBitConversionInts[0];
+            var h = 20,
+                m = 29 - l;
+            if (m !== (0 | (r - 1) % 30)) throw new Error("implementation bug");
+            var b,
+                D = 0;
 
-            if (s < r) return l.__absoluteLess(t);
-            if (s > r) return l.__absoluteGreater(t);
-            var d = 1048576 | 1048575 & l.__kBitConversionInts[1],
-                h = l.__kBitConversionInts[0],
-                b = 20,
-                m = 31 - a;
-            if (m !== (s - 1) % 31) throw new Error("implementation bug");
-            var c,
-                v = 0;
+            if (20 > m) {
+              var _i14 = h - m;
 
-            if (m < b) {
-              var y = b - m;
-              v = y + 32, c = d >>> y, d = d << 32 - y | h >>> y, h <<= 32 - y;
-            } else if (m === b) v = 32, c = d, d = h;else {
-              var f = m - b;
-              v = 32 - f, c = d << f | h >>> 32 - f, d = h << f;
+              D = _i14 + 32, b = u >>> _i14, u = u << 32 - _i14 | d >>> _i14, d <<= 32 - _i14;
+            } else if (20 === m) D = 32, b = u, u = d, d = 0;else {
+              var _i15 = m - h;
+
+              D = 32 - _i15, b = u << _i15 | d >>> 32 - _i15, u = d << _i15, d = 0;
             }
 
-            if (o >>>= 0, c >>>= 0, o > c) return l.__absoluteGreater(t);
-            if (o < c) return l.__absoluteLess(t);
+            if (s >>>= 0, b >>>= 0, s > b) return o.__absoluteGreater(t);
+            if (s < b) return o.__absoluteLess(t);
 
-            for (var D = g - 2; 0 <= D; D--) {
-              0 < v ? (v -= 32, c = d >>> 0, d = h, h = 0) : c = 0;
+            for (var _e11 = g - 2; 0 <= _e11; _e11--) {
+              0 < D ? (D -= 30, b = u >>> 2, u = u << 30 | d >>> 2, d <<= 30) : b = 0;
 
-              var k = e.__unsignedDigit(D);
+              var _13 = i.__unsignedDigit(_e11);
 
-              if (k > c) return l.__absoluteGreater(t);
-              if (k < c) return l.__absoluteLess(t);
+              if (_13 > b) return o.__absoluteGreater(t);
+              if (_13 < b) return o.__absoluteLess(t);
             }
 
-            if (0 !== d || 0 !== h) {
-              if (0 === v) throw new Error("implementation bug");
-              return l.__absoluteLess(t);
+            if (0 !== u || 0 !== d) {
+              if (0 === D) throw new Error("implementation bug");
+              return o.__absoluteLess(t);
             }
 
             return 0;
           }
         }, {
           key: "__equalToNumber",
-          value: function value(e, i) {
-            return i | 0 === i ? 0 === i ? 0 === e.length : 1 === e.length && e.sign === 0 > i && e.__unsignedDigit(0) === o(i) : 0 === l.__compareToDouble(e, i);
+          value: function __equalToNumber(i, _) {
+            return o.__isOneDigitInt(_) ? 0 === _ ? 0 === i.length : 1 === i.length && i.sign === 0 > _ && i.__unsignedDigit(0) === t(_) : 0 === o.__compareToDouble(i, _);
           }
         }, {
           key: "__comparisonResultToBool",
-          value: function value(e, i) {
-            switch (i) {
-              case 0:
-                return 0 > e;
-
-              case 1:
-                return 0 >= e;
-
-              case 2:
-                return 0 < e;
-
-              case 3:
-                return 0 <= e;
-            }
-
-            throw new Error("unreachable");
+          value: function __comparisonResultToBool(i, _) {
+            return 0 === _ ? 0 > i : 1 === _ ? 0 >= i : 2 === _ ? 0 < i : 3 === _ ? 0 <= i : void 0;
           }
         }, {
           key: "__compare",
-          value: function value(e, i, t) {
-            if (e = l.__toPrimitive(e), i = l.__toPrimitive(i), "string" == typeof e && "string" == typeof i) switch (t) {
+          value: function __compare(i, _, t) {
+            if (i = o.__toPrimitive(i), _ = o.__toPrimitive(_), "string" == typeof i && "string" == typeof _) switch (t) {
               case 0:
-                return e < i;
+                return i < _;
 
               case 1:
-                return e <= i;
+                return i <= _;
 
               case 2:
-                return e > i;
+                return i > _;
 
               case 3:
-                return e >= i;
+                return i >= _;
             }
-            if (l.__isBigInt(e) && "string" == typeof i) return i = l.__fromString(i), null !== i && l.__comparisonResultToBool(l.__compareToBigInt(e, i), t);
-            if ("string" == typeof e && l.__isBigInt(i)) return e = l.__fromString(e), null !== e && l.__comparisonResultToBool(l.__compareToBigInt(e, i), t);
+            if (o.__isBigInt(i) && "string" == typeof _) return _ = o.__fromString(_), null !== _ && o.__comparisonResultToBool(o.__compareToBigInt(i, _), t);
+            if ("string" == typeof i && o.__isBigInt(_)) return i = o.__fromString(i), null !== i && o.__comparisonResultToBool(o.__compareToBigInt(i, _), t);
 
-            if (e = l.__toNumeric(e), i = l.__toNumeric(i), l.__isBigInt(e)) {
-              if (l.__isBigInt(i)) return l.__comparisonResultToBool(l.__compareToBigInt(e, i), t);
-              if ("number" != typeof i) throw new Error("implementation bug");
-              return l.__comparisonResultToBool(l.__compareToNumber(e, i), t);
+            if (i = o.__toNumeric(i), _ = o.__toNumeric(_), o.__isBigInt(i)) {
+              if (o.__isBigInt(_)) return o.__comparisonResultToBool(o.__compareToBigInt(i, _), t);
+              if ("number" != typeof _) throw new Error("implementation bug");
+              return o.__comparisonResultToBool(o.__compareToNumber(i, _), t);
             }
 
-            if ("number" != typeof e) throw new Error("implementation bug");
-            if (l.__isBigInt(i)) return l.__comparisonResultToBool(l.__compareToNumber(i, e), 2 ^ t);
             if ("number" != typeof i) throw new Error("implementation bug");
-            return 0 === t ? e < i : 1 === t ? e <= i : 2 === t ? e > i : 3 === t ? e >= i : void 0;
+            if (o.__isBigInt(_)) return o.__comparisonResultToBool(o.__compareToNumber(_, i), 2 ^ t);
+            if ("number" != typeof _) throw new Error("implementation bug");
+            return 0 === t ? i < _ : 1 === t ? i <= _ : 2 === t ? i > _ : 3 === t ? i >= _ : void 0;
           }
         }, {
           key: "__absoluteAdd",
-          value: function value(e, t, _) {
-            if (e.length < t.length) return l.__absoluteAdd(t, e, _);
-            if (0 === e.length) return e;
-            if (0 === t.length) return e.sign === _ ? e : l.unaryMinus(e);
-            var n = e.length;
-            (0 === e.__clzmsd() || t.length === e.length && 0 === t.__clzmsd()) && n++;
+          value: function __absoluteAdd(_, t, e) {
+            if (_.length < t.length) return o.__absoluteAdd(t, _, e);
+            if (0 === _.length) return _;
+            if (0 === t.length) return _.sign === e ? _ : o.unaryMinus(_);
+            var n = _.length;
+            (0 === _.__clzmsd() || t.length === _.length && 0 === t.__clzmsd()) && n++;
+            var g = new o(n, e);
+            var s = 0,
+                l = 0;
 
-            for (var g = new l(n, _), o = 0, a = 0; a < t.length; a++) {
-              var s = t.__digit(a),
-                  u = e.__digit(a),
-                  r = (65535 & u) + (65535 & s) + o,
-                  d = (u >>> 16) + (s >>> 16) + (r >>> 16);
+            for (; l < t.length; l++) {
+              var _i16 = _.__digit(l) + t.__digit(l) + s;
 
-              o = d >>> 16, g.__setDigit(a, 65535 & r | d << 16);
+              s = _i16 >>> 30, g.__setDigit(l, 1073741823 & _i16);
             }
 
-            for (; a < e.length; a++) {
-              var h = e.__digit(a),
-                  b = (65535 & h) + o,
-                  m = (h >>> 16) + (b >>> 16);
+            for (; l < _.length; l++) {
+              var _i17 = _.__digit(l) + s;
 
-              o = m >>> 16, g.__setDigit(a, 65535 & b | m << 16);
+              s = _i17 >>> 30, g.__setDigit(l, 1073741823 & _i17);
             }
 
-            return a < g.length && g.__setDigit(a, o), g.__trim();
+            return l < g.length && g.__setDigit(l, s), g.__trim();
           }
         }, {
           key: "__absoluteSub",
-          value: function value(e, t, _) {
-            if (0 === e.length) return e;
-            if (0 === t.length) return e.sign === _ ? e : l.unaryMinus(e);
+          value: function __absoluteSub(_, t, e) {
+            if (0 === _.length) return _;
+            if (0 === t.length) return _.sign === e ? _ : o.unaryMinus(_);
+            var n = new o(_.length, e);
+            var g = 0,
+                s = 0;
 
-            for (var n = new l(e.length, _), g = 0, o = 0; o < t.length; o++) {
-              var a = e.__digit(o),
-                  s = t.__digit(o),
-                  u = (65535 & a) - (65535 & s) - g;
+            for (; s < t.length; s++) {
+              var _i18 = _.__digit(s) - t.__digit(s) - g;
 
-              g = 1 & u >>> 16;
-              var r = (a >>> 16) - (s >>> 16) - g;
-              g = 1 & r >>> 16, n.__setDigit(o, 65535 & u | r << 16);
+              g = 1 & _i18 >>> 30, n.__setDigit(s, 1073741823 & _i18);
             }
 
-            for (; o < e.length; o++) {
-              var d = e.__digit(o),
-                  h = (65535 & d) - g;
+            for (; s < _.length; s++) {
+              var _i19 = _.__digit(s) - g;
 
-              g = 1 & h >>> 16;
-              var b = (d >>> 16) - g;
-              g = 1 & b >>> 16, n.__setDigit(o, 65535 & h | b << 16);
+              g = 1 & _i19 >>> 30, n.__setDigit(s, 1073741823 & _i19);
             }
 
             return n.__trim();
           }
         }, {
           key: "__absoluteAddOne",
-          value: function value(e, t) {
-            var _ = 2 < arguments.length && void 0 !== arguments[2] ? arguments[2] : null,
-                n = e.length;
+          value: function __absoluteAddOne(_, i) {
+            var t = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+            var e = _.length;
+            null === t ? t = new o(e, i) : t.sign = i;
+            var n = 1;
 
-            null === _ ? _ = new l(n, t) : _.sign = t;
+            for (var _g8 = 0; _g8 < e; _g8++) {
+              var _i20 = _.__digit(_g8) + n;
 
-            for (var g = !0, o = 0; o < n; o++) {
-              var a = e.__digit(o),
-                  s = -1 === a;
-
-              g && (a = 0 | a + 1), g = s, _.__setDigit(o, a);
+              n = _i20 >>> 30, t.__setDigit(_g8, 1073741823 & _i20);
             }
 
-            return g && _.__setDigitGrow(n, 1), _;
+            return 0 != n && t.__setDigitGrow(e, 1), t;
           }
         }, {
           key: "__absoluteSubOne",
-          value: function value(e, t) {
-            var _ = e.length;
-            t = t || _;
+          value: function __absoluteSubOne(_, t) {
+            var e = _.length;
+            t = t || e;
+            var n = new o(t, !1);
+            var g = 1;
 
-            for (var n = new l(t, !1), g = !0, o = 0; o < _; o++) {
-              var a = e.__digit(o),
-                  s = 0 === a;
+            for (var _o16 = 0; _o16 < e; _o16++) {
+              var _i21 = _.__digit(_o16) - g;
 
-              g && (a = 0 | a - 1), g = s, n.__setDigit(o, a);
+              g = 1 & _i21 >>> 30, n.__setDigit(_o16, 1073741823 & _i21);
             }
 
-            for (var u = _; u < t; u++) {
-              n.__setDigit(u, 0);
+            if (0 != g) throw new Error("implementation bug");
+
+            for (var _g9 = e; _g9 < t; _g9++) {
+              n.__setDigit(_g9, 0);
             }
 
             return n;
           }
         }, {
           key: "__absoluteAnd",
-          value: function value(e, t) {
-            var _ = 2 < arguments.length && void 0 !== arguments[2] ? arguments[2] : null,
-                n = e.length,
+          value: function __absoluteAnd(_, t) {
+            var e = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+            var n = _.length,
                 g = t.length,
-                o = g;
+                s = g;
 
             if (n < g) {
-              o = n;
-              var a = e,
-                  s = n;
-              e = t, n = g, t = a, g = s;
+              s = n;
+              var _i22 = _,
+                  _e12 = n;
+              _ = t, n = g, t = _i22, g = _e12;
             }
 
-            var u = o;
-            null === _ ? _ = new l(u, !1) : u = _.length;
+            var l = s;
+            null === e ? e = new o(l, !1) : l = e.length;
+            var r = 0;
 
-            for (var r = 0; r < o; r++) {
-              _.__setDigit(r, e.__digit(r) & t.__digit(r));
+            for (; r < s; r++) {
+              e.__setDigit(r, _.__digit(r) & t.__digit(r));
             }
 
-            for (; r < u; r++) {
-              _.__setDigit(r, 0);
+            for (; r < l; r++) {
+              e.__setDigit(r, 0);
             }
 
-            return _;
+            return e;
           }
         }, {
           key: "__absoluteAndNot",
-          value: function value(e, t) {
-            var _ = 2 < arguments.length && void 0 !== arguments[2] ? arguments[2] : null,
-                n = e.length,
-                g = t.length,
-                o = g;
+          value: function __absoluteAndNot(_, t) {
+            var e = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+            var n = _.length,
+                g = t.length;
+            var s = g;
+            n < g && (s = n);
+            var l = n;
+            null === e ? e = new o(l, !1) : l = e.length;
+            var r = 0;
 
-            n < g && (o = n);
-            var a = n;
-            null === _ ? _ = new l(a, !1) : a = _.length;
-
-            for (var s = 0; s < o; s++) {
-              _.__setDigit(s, e.__digit(s) & ~t.__digit(s));
+            for (; r < s; r++) {
+              e.__setDigit(r, _.__digit(r) & ~t.__digit(r));
             }
 
-            for (; s < n; s++) {
-              _.__setDigit(s, e.__digit(s));
+            for (; r < n; r++) {
+              e.__setDigit(r, _.__digit(r));
             }
 
-            for (; s < a; s++) {
-              _.__setDigit(s, 0);
+            for (; r < l; r++) {
+              e.__setDigit(r, 0);
             }
 
-            return _;
+            return e;
           }
         }, {
           key: "__absoluteOr",
-          value: function value(e, t) {
-            var _ = 2 < arguments.length && void 0 !== arguments[2] ? arguments[2] : null,
-                n = e.length,
+          value: function __absoluteOr(_, t) {
+            var e = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+            var n = _.length,
                 g = t.length,
-                o = g;
+                s = g;
 
             if (n < g) {
-              o = n;
-              var a = e,
-                  s = n;
-              e = t, n = g, t = a, g = s;
+              s = n;
+              var _i23 = _,
+                  _e13 = n;
+              _ = t, n = g, t = _i23, g = _e13;
             }
 
-            var u = n;
-            null === _ ? _ = new l(u, !1) : u = _.length;
+            var l = n;
+            null === e ? e = new o(l, !1) : l = e.length;
+            var r = 0;
 
-            for (var r = 0; r < o; r++) {
-              _.__setDigit(r, e.__digit(r) | t.__digit(r));
+            for (; r < s; r++) {
+              e.__setDigit(r, _.__digit(r) | t.__digit(r));
             }
 
             for (; r < n; r++) {
-              _.__setDigit(r, e.__digit(r));
+              e.__setDigit(r, _.__digit(r));
             }
 
-            for (; r < u; r++) {
-              _.__setDigit(r, 0);
+            for (; r < l; r++) {
+              e.__setDigit(r, 0);
             }
 
-            return _;
+            return e;
           }
         }, {
           key: "__absoluteXor",
-          value: function value(e, t) {
-            var _ = 2 < arguments.length && void 0 !== arguments[2] ? arguments[2] : null,
-                n = e.length,
+          value: function __absoluteXor(_, t) {
+            var e = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+            var n = _.length,
                 g = t.length,
-                o = g;
+                s = g;
 
             if (n < g) {
-              o = n;
-              var a = e,
-                  s = n;
-              e = t, n = g, t = a, g = s;
+              s = n;
+              var _i24 = _,
+                  _e14 = n;
+              _ = t, n = g, t = _i24, g = _e14;
             }
 
-            var u = n;
-            null === _ ? _ = new l(u, !1) : u = _.length;
+            var l = n;
+            null === e ? e = new o(l, !1) : l = e.length;
+            var r = 0;
 
-            for (var r = 0; r < o; r++) {
-              _.__setDigit(r, e.__digit(r) ^ t.__digit(r));
+            for (; r < s; r++) {
+              e.__setDigit(r, _.__digit(r) ^ t.__digit(r));
             }
 
             for (; r < n; r++) {
-              _.__setDigit(r, e.__digit(r));
+              e.__setDigit(r, _.__digit(r));
             }
 
-            for (; r < u; r++) {
-              _.__setDigit(r, 0);
+            for (; r < l; r++) {
+              e.__setDigit(r, 0);
             }
 
-            return _;
+            return e;
           }
         }, {
           key: "__absoluteCompare",
-          value: function value(e, t) {
-            var _ = e.length - t.length;
+          value: function __absoluteCompare(_, t) {
+            var e = _.length - t.length;
+            if (0 != e) return e;
+            var n = _.length - 1;
 
-            if (0 != _) return _;
-
-            for (var n = e.length - 1; 0 <= n && e.__digit(n) === t.__digit(n);) {
+            for (; 0 <= n && _.__digit(n) === t.__digit(n);) {
               n--;
             }
 
-            return 0 > n ? 0 : e.__unsignedDigit(n) > t.__unsignedDigit(n) ? 1 : -1;
+            return 0 > n ? 0 : _.__unsignedDigit(n) > t.__unsignedDigit(n) ? 1 : -1;
           }
         }, {
           key: "__multiplyAccumulate",
-          value: function value(e, t, _, n) {
-            if (0 !== t) {
-              for (var g = 65535 & t, l = t >>> 16, o = 0, a = 0, u = 0, r = 0; r < e.length; r++, n++) {
-                var d = _.__digit(n),
-                    h = 65535 & d,
-                    b = d >>> 16,
-                    m = e.__digit(r),
-                    c = 65535 & m,
-                    v = m >>> 16,
-                    y = s(c, g),
-                    f = s(c, l),
-                    D = s(v, g),
-                    k = s(v, l);
+          value: function __multiplyAccumulate(_, t, e, n) {
+            if (0 === t) return;
+            var g = 32767 & t,
+                s = t >>> 15;
+            var l = 0,
+                r = 0;
 
-                h += a + (65535 & y), b += u + o + (h >>> 16) + (y >>> 16) + (65535 & f) + (65535 & D), o = b >>> 16, a = (f >>> 16) + (D >>> 16) + (65535 & k) + o, o = a >>> 16, a &= 65535, u = k >>> 16, d = 65535 & h | b << 16, _.__setDigit(n, d);
-              }
+            for (var a, u = 0; u < _.length; u++, n++) {
+              a = e.__digit(n);
 
-              for (; 0 !== o || 0 !== a || 0 !== u; n++) {
-                var p = _.__digit(n),
-                    B = (65535 & p) + a,
-                    S = (p >>> 16) + (B >>> 16) + u + o;
+              var _i25 = _.__digit(u),
+                  _t10 = 32767 & _i25,
+                  d = _i25 >>> 15,
+                  h = o.__imul(_t10, g),
+                  m = o.__imul(_t10, s),
+                  b = o.__imul(d, g),
+                  D = o.__imul(d, s);
 
-                a = 0, u = 0, o = S >>> 16, p = 65535 & B | S << 16, _.__setDigit(n, p);
-              }
+              a += r + h + l, l = a >>> 30, a &= 1073741823, a += ((32767 & m) << 15) + ((32767 & b) << 15), l += a >>> 30, r = D + (m >>> 15) + (b >>> 15), e.__setDigit(n, 1073741823 & a);
+            }
+
+            for (; 0 != l || 0 !== r; n++) {
+              var _i26 = e.__digit(n);
+
+              _i26 += l + r, r = 0, l = _i26 >>> 30, e.__setDigit(n, 1073741823 & _i26);
             }
           }
         }, {
           key: "__internalMultiplyAdd",
-          value: function value(e, t, _, g, l) {
-            for (var o = _, a = 0, u = 0; u < g; u++) {
-              var r = e.__digit(u),
-                  d = s(65535 & r, t),
-                  h = (65535 & d) + a + o;
+          value: function __internalMultiplyAdd(_, t, e, g, s) {
+            var l = e,
+                a = 0;
 
-              o = h >>> 16;
-              var b = s(r >>> 16, t),
-                  m = (65535 & b) + (d >>> 16) + o;
-              o = m >>> 16, a = b >>> 16, l.__setDigit(u, m << 16 | 65535 & h);
+            for (var n = 0; n < g; n++) {
+              var _i27 = _.__digit(n),
+                  _e15 = o.__imul(32767 & _i27, t),
+                  _g10 = o.__imul(_i27 >>> 15, t),
+                  u = _e15 + ((32767 & _g10) << 15) + a + l;
+
+              l = u >>> 30, a = _g10 >>> 15, s.__setDigit(n, 1073741823 & u);
             }
 
-            if (l.length > g) for (l.__setDigit(g++, o + a); g < l.length;) {
-              l.__setDigit(g++, 0);
-            } else if (0 !== o + a) throw new Error("implementation bug");
+            if (s.length > g) for (s.__setDigit(g++, l + a); g < s.length;) {
+              s.__setDigit(g++, 0);
+            } else if (0 !== l + a) throw new Error("implementation bug");
           }
         }, {
           key: "__absoluteDivSmall",
-          value: function value(e, t, _) {
-            null === _ && (_ = new l(e.length, !1));
+          value: function __absoluteDivSmall(_, t) {
+            var e = arguments.length > 2 && arguments[2] !== undefined ? arguments[2] : null;
+            null === e && (e = new o(_.length, !1));
+            var n = 0;
 
-            for (var n = 0, g = 2 * e.length - 1; 0 <= g; g -= 2) {
-              var o = (n << 16 | e.__halfDigit(g)) >>> 0,
-                  a = 0 | o / t;
-              n = 0 | o % t, o = (n << 16 | e.__halfDigit(g - 1)) >>> 0;
-              var s = 0 | o / t;
-              n = 0 | o % t, _.__setDigit(g >>> 1, a << 16 | s);
+            for (var _g11, _o17 = 2 * _.length - 1; 0 <= _o17; _o17 -= 2) {
+              _g11 = (n << 15 | _.__halfDigit(_o17)) >>> 0;
+
+              var _i28 = 0 | _g11 / t;
+
+              n = 0 | _g11 % t, _g11 = (n << 15 | _.__halfDigit(_o17 - 1)) >>> 0;
+              var s = 0 | _g11 / t;
+              n = 0 | _g11 % t, e.__setDigit(_o17 >>> 1, _i28 << 15 | s);
             }
 
-            return _;
+            return e;
           }
         }, {
           key: "__absoluteModSmall",
-          value: function value(e, t) {
-            for (var _, n = 0, g = 2 * e.length - 1; 0 <= g; g--) {
-              _ = (n << 16 | e.__halfDigit(g)) >>> 0, n = 0 | _ % t;
+          value: function __absoluteModSmall(_, t) {
+            var e = 0;
+
+            for (var n = 2 * _.length - 1; 0 <= n; n--) {
+              var _i29 = (e << 15 | _.__halfDigit(n)) >>> 0;
+
+              e = 0 | _i29 % t;
             }
 
-            return n;
+            return e;
           }
         }, {
           key: "__absoluteDivLarge",
-          value: function value(e, i, t, _) {
-            var g = i.__halfDigitLength(),
-                n = i.length,
-                o = e.__halfDigitLength() - g,
-                a = null;
+          value: function __absoluteDivLarge(i, _, t, e) {
+            var g = _.__halfDigitLength(),
+                n = _.length,
+                s = i.__halfDigitLength() - g;
 
-            t && (a = new l(o + 2 >>> 1, !1), a.__initializeDigits());
-            var r = new l(g + 2 >>> 1, !1);
+            var l = null;
+            t && (l = new o(s + 2 >>> 1, !1), l.__initializeDigits());
+            var r = new o(g + 2 >>> 1, !1);
 
             r.__initializeDigits();
 
-            var d = l.__clz16(i.__halfDigit(g - 1));
+            var a = o.__clz15(_.__halfDigit(g - 1));
 
-            0 < d && (i = l.__specialLeftShift(i, d, 0));
+            0 < a && (_ = o.__specialLeftShift(_, a, 0));
 
-            for (var h = l.__specialLeftShift(e, d, 1), u = i.__halfDigit(g - 1), b = 0, m = o; 0 <= m; m--) {
-              var v = 65535,
-                  y = h.__halfDigit(m + g);
+            var d = o.__specialLeftShift(i, a, 1),
+                u = _.__halfDigit(g - 1);
 
-              if (y !== u) {
-                var f = (y << 16 | h.__halfDigit(m + g - 1)) >>> 0;
-                v = 0 | f / u;
+            var h = 0;
 
-                for (var D = 0 | f % u, k = i.__halfDigit(g - 2), p = h.__halfDigit(m + g - 2); s(v, k) >>> 0 > (D << 16 | p) >>> 0 && (v--, D += u, !(65535 < D));) {
+            for (var _a2, m = s; 0 <= m; m--) {
+              _a2 = 32767;
+
+              var _i30 = d.__halfDigit(m + g);
+
+              if (_i30 !== u) {
+                var _t11 = (_i30 << 15 | d.__halfDigit(m + g - 1)) >>> 0;
+
+                _a2 = 0 | _t11 / u;
+
+                var _e17 = 0 | _t11 % u;
+
+                var _n4 = _.__halfDigit(g - 2),
+                    _s6 = d.__halfDigit(m + g - 2);
+
+                for (; o.__imul(_a2, _n4) >>> 0 > (_e17 << 16 | _s6) >>> 0 && (_a2--, _e17 += u, !(32767 < _e17));) {
                 }
               }
 
-              l.__internalMultiplyAdd(i, v, 0, n, r);
+              o.__internalMultiplyAdd(_, _a2, 0, n, r);
 
-              var B = h.__inplaceSub(r, m, g + 1);
+              var _e16 = d.__inplaceSub(r, m, g + 1);
 
-              0 !== B && (B = h.__inplaceAdd(i, m, g), h.__setHalfDigit(m + g, h.__halfDigit(m + g) + B), v--), t && (1 & m ? b = v << 16 : a.__setDigit(m >>> 1, b | v));
+              0 !== _e16 && (_e16 = d.__inplaceAdd(_, m, g), d.__setHalfDigit(m + g, 32767 & d.__halfDigit(m + g) + _e16), _a2--), t && (1 & m ? h = _a2 << 15 : l.__setDigit(m >>> 1, h | _a2));
             }
 
-            return _ ? (h.__inplaceRightShift(d), t ? {
-              quotient: a,
-              remainder: h
-            } : h) : t ? a : void 0;
+            if (e) return d.__inplaceRightShift(a), t ? {
+              quotient: l,
+              remainder: d
+            } : d;
+            if (t) return l;
+            throw new Error("unreachable");
           }
         }, {
-          key: "__clz16",
-          value: function value(e) {
-            return u(e) - 16;
+          key: "__clz15",
+          value: function __clz15(i) {
+            return o.__clz30(i) - 15;
           }
         }, {
           key: "__specialLeftShift",
-          value: function value(e, t, _) {
-            var g = e.length,
-                n = new l(g + _, !1);
+          value: function __specialLeftShift(_, t, e) {
+            var g = _.length,
+                n = new o(g + e, !1);
 
             if (0 === t) {
-              for (var o = 0; o < g; o++) {
-                n.__setDigit(o, e.__digit(o));
+              for (var _t12 = 0; _t12 < g; _t12++) {
+                n.__setDigit(_t12, _.__digit(_t12));
               }
 
-              return 0 < _ && n.__setDigit(g, 0), n;
+              return 0 < e && n.__setDigit(g, 0), n;
             }
 
-            for (var a, s = 0, u = 0; u < g; u++) {
-              a = e.__digit(u), n.__setDigit(u, a << t | s), s = a >>> 32 - t;
+            var s = 0;
+
+            for (var _o18 = 0; _o18 < g; _o18++) {
+              var _i31 = _.__digit(_o18);
+
+              n.__setDigit(_o18, 1073741823 & _i31 << t | s), s = _i31 >>> 30 - t;
             }
 
-            return 0 < _ && n.__setDigit(g, s), n;
+            return 0 < e && n.__setDigit(g, s), n;
           }
         }, {
           key: "__leftShiftByAbsolute",
-          value: function value(e, t) {
-            var _ = l.__toShiftAmount(t);
+          value: function __leftShiftByAbsolute(_, i) {
+            var t = o.__toShiftAmount(i);
 
-            if (0 > _) throw new RangeError("BigInt too big");
-            var n = _ >>> 5,
-                g = 31 & _,
-                o = e.length,
-                a = 0 !== g && 0 != e.__digit(o - 1) >>> 32 - g,
-                s = o + n + (a ? 1 : 0),
-                u = new l(s, e.sign);
+            if (0 > t) throw new RangeError("BigInt too big");
+            var e = 0 | t / 30,
+                n = t % 30,
+                g = _.length,
+                s = 0 !== n && 0 != _.__digit(g - 1) >>> 30 - n,
+                l = g + e + (s ? 1 : 0),
+                r = new o(l, _.sign);
 
-            if (0 === g) {
-              for (var r = 0; r < n; r++) {
-                u.__setDigit(r, 0);
+            if (0 === n) {
+              var _t13 = 0;
+
+              for (; _t13 < e; _t13++) {
+                r.__setDigit(_t13, 0);
               }
 
-              for (; r < s; r++) {
-                u.__setDigit(r, e.__digit(r - n));
+              for (; _t13 < l; _t13++) {
+                r.__setDigit(_t13, _.__digit(_t13 - e));
               }
             } else {
-              for (var h = 0, b = 0; b < n; b++) {
-                u.__setDigit(b, 0);
+              var _t14 = 0;
+
+              for (var _14 = 0; _14 < e; _14++) {
+                r.__setDigit(_14, 0);
               }
 
-              for (var m, c = 0; c < o; c++) {
-                m = e.__digit(c), u.__setDigit(c + n, m << g | h), h = m >>> 32 - g;
+              for (var _o19 = 0; _o19 < g; _o19++) {
+                var _i32 = _.__digit(_o19);
+
+                r.__setDigit(_o19 + e, 1073741823 & _i32 << n | _t14), _t14 = _i32 >>> 30 - n;
               }
 
-              if (a) u.__setDigit(o + n, h);else if (0 !== h) throw new Error("implementation bug");
+              if (s) r.__setDigit(g + e, _t14);else if (0 !== _t14) throw new Error("implementation bug");
             }
 
-            return u.__trim();
+            return r.__trim();
           }
         }, {
           key: "__rightShiftByAbsolute",
-          value: function value(e, t) {
-            var _ = e.length,
-                n = e.sign,
-                g = l.__toShiftAmount(t);
+          value: function __rightShiftByAbsolute(_, i) {
+            var t = _.length,
+                e = _.sign,
+                n = o.__toShiftAmount(i);
 
-            if (0 > g) return l.__rightShiftByMaximum(n);
-            var o = g >>> 5,
-                a = 31 & g,
-                s = _ - o;
-            if (0 >= s) return l.__rightShiftByMaximum(n);
-            var u = !1;
+            if (0 > n) return o.__rightShiftByMaximum(e);
+            var g = 0 | n / 30,
+                s = n % 30;
+            var l = t - g;
+            if (0 >= l) return o.__rightShiftByMaximum(e);
+            var r = !1;
 
-            if (n) {
-              if (0 != (e.__digit(o) & (1 << a) - 1)) u = !0;else for (var r = 0; r < o; r++) {
-                if (0 !== e.__digit(r)) {
-                  u = !0;
+            if (e) {
+              if (0 != (_.__digit(g) & (1 << s) - 1)) r = !0;else for (var _t15 = 0; _t15 < g; _t15++) {
+                if (0 !== _.__digit(_t15)) {
+                  r = !0;
                   break;
                 }
               }
             }
 
-            if (u && 0 === a) {
-              var h = e.__digit(_ - 1);
+            if (r && 0 === s) {
+              var _i33 = _.__digit(t - 1);
 
-              0 == ~h && s++;
+              0 == ~_i33 && l++;
             }
 
-            var b = new l(s, n);
-            if (0 === a) for (var m = o; m < _; m++) {
-              b.__setDigit(m - o, e.__digit(m));
+            var a = new o(l, e);
+
+            if (0 === s) {
+              a.__setDigit(l - 1, 0);
+
+              for (var _e18 = g; _e18 < t; _e18++) {
+                a.__setDigit(_e18 - g, _.__digit(_e18));
+              }
             } else {
-              for (var c, v = e.__digit(o) >>> a, y = _ - o - 1, f = 0; f < y; f++) {
-                c = e.__digit(f + o + 1), b.__setDigit(f, c << 32 - a | v), v = c >>> a;
+              var _e19 = _.__digit(g) >>> s;
+
+              var _n5 = t - g - 1;
+
+              for (var _t16 = 0; _t16 < _n5; _t16++) {
+                var _i34 = _.__digit(_t16 + g + 1);
+
+                a.__setDigit(_t16, 1073741823 & _i34 << 30 - s | _e19), _e19 = _i34 >>> s;
               }
 
-              b.__setDigit(y, v);
+              a.__setDigit(_n5, _e19);
             }
-            return u && (b = l.__absoluteAddOne(b, !0, b)), b.__trim();
+
+            return r && (a = o.__absoluteAddOne(a, !0, a)), a.__trim();
           }
         }, {
           key: "__rightShiftByMaximum",
-          value: function value(e) {
-            return e ? l.__oneDigit(1, !0) : l.__zero();
+          value: function __rightShiftByMaximum(i) {
+            return i ? o.__oneDigit(1, !0) : o.__zero();
           }
         }, {
           key: "__toShiftAmount",
-          value: function value(e) {
-            if (1 < e.length) return -1;
+          value: function __toShiftAmount(i) {
+            if (1 < i.length) return -1;
 
-            var i = e.__unsignedDigit(0);
+            var _ = i.__unsignedDigit(0);
 
-            return i > l.__kMaxLengthBits ? -1 : i;
+            return _ > o.__kMaxLengthBits ? -1 : _;
           }
         }, {
           key: "__toPrimitive",
-          value: function value(i) {
-            var t = 1 < arguments.length && void 0 !== arguments[1] ? arguments[1] : "default";
-            if ("object" !== e(i)) return i;
-            if (i.constructor === l) return i;
-            var _ = i[Symbol.toPrimitive];
+          value: function __toPrimitive(i) {
+            var _ = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : "default";
 
-            if (_) {
-              var n = _(t);
+            if ("object" != _typeof(i)) return i;
+            if (i.constructor === o) return i;
 
-              if ("object" !== e(n)) return n;
-              throw new TypeError("Cannot convert object to primitive value");
+            if ("undefined" != typeof Symbol && "symbol" == _typeof(Symbol.toPrimitive)) {
+              var _t17 = i[Symbol.toPrimitive];
+
+              if (_t17) {
+                var _i35 = _t17(_);
+
+                if ("object" != _typeof(_i35)) return _i35;
+                throw new TypeError("Cannot convert object to primitive value");
+              }
             }
 
-            var g = i.valueOf;
+            var t = i.valueOf;
 
-            if (g) {
-              var o = g.call(i);
-              if ("object" !== e(o)) return o;
+            if (t) {
+              var _15 = t.call(i);
+
+              if ("object" != _typeof(_15)) return _15;
             }
 
-            var a = i.toString;
+            var e = i.toString;
 
-            if (a) {
-              var s = a.call(i);
-              if ("object" !== e(s)) return s;
+            if (e) {
+              var _16 = e.call(i);
+
+              if ("object" != _typeof(_16)) return _16;
             }
 
             throw new TypeError("Cannot convert object to primitive value");
           }
         }, {
           key: "__toNumeric",
-          value: function value(e) {
-            return l.__isBigInt(e) ? e : +e;
+          value: function __toNumeric(i) {
+            return o.__isBigInt(i) ? i : +i;
           }
         }, {
           key: "__isBigInt",
-          value: function value(i) {
-            return "object" === e(i) && i.constructor === l;
+          value: function __isBigInt(i) {
+            return "object" == _typeof(i) && null !== i && i.constructor === o;
+          }
+        }, {
+          key: "__truncateToNBits",
+          value: function __truncateToNBits(i, _) {
+            var t = 0 | (i + 29) / 30,
+                e = new o(t, _.sign),
+                n = t - 1;
+
+            for (var _t18 = 0; _t18 < n; _t18++) {
+              e.__setDigit(_t18, _.__digit(_t18));
+            }
+
+            var g = _.__digit(n);
+
+            if (0 != i % 30) {
+              var _17 = 32 - i % 30;
+
+              g = g << _17 >>> _17;
+            }
+
+            return e.__setDigit(n, g), e.__trim();
+          }
+        }, {
+          key: "__truncateAndSubFromPowerOfTwo",
+          value: function __truncateAndSubFromPowerOfTwo(_, t, e) {
+            var n = Math.min;
+            var g = 0 | (_ + 29) / 30,
+                s = new o(g, e);
+            var l = 0;
+            var r = g - 1;
+            var a = 0;
+
+            for (var _i36 = n(r, t.length); l < _i36; l++) {
+              var _i37 = 0 - t.__digit(l) - a;
+
+              a = 1 & _i37 >>> 30, s.__setDigit(l, 1073741823 & _i37);
+            }
+
+            for (; l < r; l++) {
+              s.__setDigit(l, 0 | 1073741823 & -a);
+            }
+
+            var u = r < t.length ? t.__digit(r) : 0;
+            var d = _ % 30;
+            var h;
+            if (0 == d) h = 0 - u - a, h &= 1073741823;else {
+              var _i38 = 32 - d;
+
+              u = u << _i38 >>> _i38;
+
+              var _18 = 1 << 32 - _i38;
+
+              h = _18 - u - a, h &= _18 - 1;
+            }
+            return s.__setDigit(r, h), s.__trim();
           }
         }, {
           key: "__digitPow",
-          value: function value(e, i) {
-            for (var t = 1; 0 < i;) {
-              1 & i && (t *= e), i >>>= 1, e *= e;
+          value: function __digitPow(i, _) {
+            var t = 1;
+
+            for (; 0 < _;) {
+              1 & _ && (t *= i), _ >>>= 1, i *= i;
             }
 
             return t;
           }
-        }]), l;
-      }(u(Array));
+        }, {
+          key: "__isOneDigitInt",
+          value: function __isOneDigitInt(i) {
+            return (1073741823 & i) === i;
+          }
+        }]);
 
-      return h.__kMaxLength = 33554432, h.__kMaxLengthBits = h.__kMaxLength << 5, h.__kMaxBitsPerChar = [0, 0, 32, 51, 64, 75, 83, 90, 96, 102, 107, 111, 115, 119, 122, 126, 128, 131, 134, 136, 139, 141, 143, 145, 147, 149, 151, 153, 154, 156, 158, 159, 160, 162, 163, 165, 166], h.__kBitsPerCharTableShift = 5, h.__kBitsPerCharTableMultiplier = 1 << h.__kBitsPerCharTableShift, h.__kConversionChars = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"], h.__kBitConversionBuffer = new ArrayBuffer(8), h.__kBitConversionDouble = new Float64Array(h.__kBitConversionBuffer), h.__kBitConversionInts = new Int32Array(h.__kBitConversionBuffer), h;
+        return o;
+      }( /*#__PURE__*/_wrapNativeSuper(Array));
+
+      return o.__kMaxLength = 33554432, o.__kMaxLengthBits = o.__kMaxLength << 5, o.__kMaxBitsPerChar = [0, 0, 32, 51, 64, 75, 83, 90, 96, 102, 107, 111, 115, 119, 122, 126, 128, 131, 134, 136, 139, 141, 143, 145, 147, 149, 151, 153, 154, 156, 158, 159, 160, 162, 163, 165, 166], o.__kBitsPerCharTableShift = 5, o.__kBitsPerCharTableMultiplier = 1 << o.__kBitsPerCharTableShift, o.__kConversionChars = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"], o.__kBitConversionBuffer = new ArrayBuffer(8), o.__kBitConversionDouble = new Float64Array(o.__kBitConversionBuffer), o.__kBitConversionInts = new Int32Array(o.__kBitConversionBuffer), o.__clz30 = _ ? function (i) {
+        return _(i) - 2;
+      } : function (i) {
+        var _ = Math.LN2,
+            t = Math.log;
+        return 0 === i ? 30 : 0 | 29 - (0 | t(i >>> 0) / _);
+      }, o.__imul = i || function (i, _) {
+        return 0 | i * _;
+      }, o;
     });
   });
 
@@ -43660,33 +49272,29 @@ document.getElementById("create-token").onclick = create_token_click;
 
 
   function sha256x2(buffer) {
-    var tmp = browser('sha256').update(buffer).digest();
-    return browser('sha256').update(tmp).digest();
+    var tmp = browser$2('sha256').update(buffer).digest();
+    return browser$2('sha256').update(tmp).digest();
   }
 
   var bs58check = bs58checkBase(sha256x2);
 
   function _typeof$1(obj) {
-    if (typeof Symbol === "function" && _typeof(Symbol.iterator) === "symbol") {
-      _typeof$1 = function _typeof$1(obj) {
-        return _typeof(obj);
-      };
-    } else {
-      _typeof$1 = function _typeof$1(obj) {
-        return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : _typeof(obj);
-      };
-    }
+    "@babel/helpers - typeof";
 
-    return _typeof$1(obj);
+    return _typeof$1 = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (obj) {
+      return typeof obj;
+    } : function (obj) {
+      return obj && "function" == typeof Symbol && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+    }, _typeof$1(obj);
   }
 
-  function _classCallCheck$1(instance, Constructor) {
+  function _classCallCheck$2(instance, Constructor) {
     if (!(instance instanceof Constructor)) {
       throw new TypeError("Cannot call a class as a function");
     }
   }
 
-  function _defineProperties$1(target, props) {
+  function _defineProperties$2(target, props) {
     for (var i = 0; i < props.length; i++) {
       var descriptor = props[i];
       descriptor.enumerable = descriptor.enumerable || false;
@@ -43696,13 +49304,16 @@ document.getElementById("create-token").onclick = create_token_click;
     }
   }
 
-  function _createClass$1(Constructor, protoProps, staticProps) {
-    if (protoProps) _defineProperties$1(Constructor.prototype, protoProps);
-    if (staticProps) _defineProperties$1(Constructor, staticProps);
+  function _createClass$2(Constructor, protoProps, staticProps) {
+    if (protoProps) _defineProperties$2(Constructor.prototype, protoProps);
+    if (staticProps) _defineProperties$2(Constructor, staticProps);
+    Object.defineProperty(Constructor, "prototype", {
+      writable: false
+    });
     return Constructor;
   }
 
-  function _defineProperty$1(obj, key, value) {
+  function _defineProperty$3(obj, key, value) {
     if (key in obj) {
       Object.defineProperty(obj, key, {
         value: value,
@@ -43718,21 +49329,15 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function _slicedToArray$1(arr, i) {
-    return _arrayWithHoles$1(arr) || _iterableToArrayLimit$1(arr, i) || _nonIterableRest$1();
+    return _arrayWithHoles$1(arr) || _iterableToArrayLimit$1(arr, i) || _unsupportedIterableToArray$1(arr, i) || _nonIterableRest$1();
   }
 
   function _toConsumableArray$1(arr) {
-    return _arrayWithoutHoles$1(arr) || _iterableToArray$1(arr) || _nonIterableSpread$1();
+    return _arrayWithoutHoles$1(arr) || _iterableToArray$1(arr) || _unsupportedIterableToArray$1(arr) || _nonIterableSpread$1();
   }
 
   function _arrayWithoutHoles$1(arr) {
-    if (Array.isArray(arr)) {
-      for (var i = 0, arr2 = new Array(arr.length); i < arr.length; i++) {
-        arr2[i] = arr[i];
-      }
-
-      return arr2;
-    }
+    if (Array.isArray(arr)) return _arrayLikeToArray$1(arr);
   }
 
   function _arrayWithHoles$1(arr) {
@@ -43740,21 +49345,21 @@ document.getElementById("create-token").onclick = create_token_click;
   }
 
   function _iterableToArray$1(iter) {
-    if (Symbol.iterator in Object(iter) || Object.prototype.toString.call(iter) === "[object Arguments]") return Array.from(iter);
+    if (typeof Symbol !== "undefined" && iter[Symbol.iterator] != null || iter["@@iterator"] != null) return Array.from(iter);
   }
 
   function _iterableToArrayLimit$1(arr, i) {
-    if (!(Symbol.iterator in Object(arr) || Object.prototype.toString.call(arr) === "[object Arguments]")) {
-      return;
-    }
+    var _i = arr == null ? null : typeof Symbol !== "undefined" && arr[Symbol.iterator] || arr["@@iterator"];
 
+    if (_i == null) return;
     var _arr = [];
     var _n = true;
     var _d = false;
-    var _e = undefined;
+
+    var _s, _e;
 
     try {
-      for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) {
+      for (_i = _i.call(arr); !(_n = (_s = _i.next()).done); _n = true) {
         _arr.push(_s.value);
 
         if (i && _arr.length === i) break;
@@ -43773,12 +49378,31 @@ document.getElementById("create-token").onclick = create_token_click;
     return _arr;
   }
 
+  function _unsupportedIterableToArray$1(o, minLen) {
+    if (!o) return;
+    if (typeof o === "string") return _arrayLikeToArray$1(o, minLen);
+    var n = Object.prototype.toString.call(o).slice(8, -1);
+    if (n === "Object" && o.constructor) n = o.constructor.name;
+    if (n === "Map" || n === "Set") return Array.from(o);
+    if (n === "Arguments" || /^(?:Ui|I)nt(?:8|16|32)(?:Clamped)?Array$/.test(n)) return _arrayLikeToArray$1(o, minLen);
+  }
+
+  function _arrayLikeToArray$1(arr, len) {
+    if (len == null || len > arr.length) len = arr.length;
+
+    for (var i = 0, arr2 = new Array(len); i < len; i++) {
+      arr2[i] = arr[i];
+    }
+
+    return arr2;
+  }
+
   function _nonIterableSpread$1() {
-    throw new TypeError("Invalid attempt to spread non-iterable instance");
+    throw new TypeError("Invalid attempt to spread non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
   }
 
   function _nonIterableRest$1() {
-    throw new TypeError("Invalid attempt to destructure non-iterable instance");
+    throw new TypeError("Invalid attempt to destructure non-iterable instance.\nIn order to be iterable, non-array objects must have a [Symbol.iterator]() method.");
   }
   /**
    * Returns the next interval to use for exponential backoff.
@@ -43868,39 +49492,16 @@ document.getElementById("create-token").onclick = create_token_click;
    */
 
 
-  var Amount =
-  /*#__PURE__*/
-  function () {
-    _createClass$1(Amount, null, [{
-      key: "_valueFromString",
-      // value in base unit
-      // unit for displaying
-      value: function _valueFromString(value) {
-        var unit = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
-
-        if (unit === '') {
-          unit = DEFAULT_USER_UNIT;
-        }
-
-        var prec = getUnitPrecision(unit);
-
-        if (prec > 0) {
-          value = Amount.moveDecimalPoint(value, prec);
-        }
-
-        return jsbiUmd.BigInt(value);
-      }
-    }]);
-
+  var Amount = /*#__PURE__*/function () {
     function Amount(value) {
       var unit = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
       var newUnit = arguments.length > 2 ? arguments[2] : undefined;
 
-      _classCallCheck$1(this, Amount);
+      _classCallCheck$2(this, Amount);
 
-      _defineProperty$1(this, "value", void 0);
+      _defineProperty$3(this, "value", void 0);
 
-      _defineProperty$1(this, "unit", void 0);
+      _defineProperty$3(this, "unit", void 0);
 
       if (value instanceof Amount) {
         return value;
@@ -43951,7 +49552,7 @@ document.getElementById("create-token").onclick = create_token_click;
      */
 
 
-    _createClass$1(Amount, [{
+    _createClass$2(Amount, [{
       key: "asBytes",
       value: function asBytes() {
         return Buffer$1.from(fromHexString(this.value.toString(16)));
@@ -44012,7 +49613,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
     }, {
       key: "compare",
-
+      value:
       /**
        * Compare this amount with other amount.
        * If otherAmount has no unit, assumes unit of this amount.
@@ -44021,7 +49622,7 @@ document.getElementById("create-token").onclick = create_token_click;
        * this == other -> 0
        * @param otherAmount 
        */
-      value: function compare(otherAmount) {
+      function compare(otherAmount) {
         var a = this.value;
         var b = Amount.toJSBI(otherAmount, this.unit);
         return jsbiUmd.equal(a, b) ? 0 : jsbiUmd.lessThan(a, b) ? -1 : 1;
@@ -44116,6 +49717,25 @@ document.getElementById("create-token").onclick = create_token_click;
         return new Amount(sum, this.unit);
       }
     }], [{
+      key: "_valueFromString",
+      value: // value in base unit
+      // unit for displaying
+      function _valueFromString(value) {
+        var unit = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : '';
+
+        if (unit === '') {
+          unit = DEFAULT_USER_UNIT;
+        }
+
+        var prec = getUnitPrecision(unit);
+
+        if (prec > 0) {
+          value = Amount.moveDecimalPoint(value, prec);
+        }
+
+        return jsbiUmd.BigInt(value);
+      }
+    }, {
       key: "moveDecimalPoint",
       value: function moveDecimalPoint(str, digits) {
         if (digits === 0 || str === '0') return str;
@@ -44176,17 +49796,15 @@ document.getElementById("create-token").onclick = create_token_click;
    */
 
 
-  var Address =
-  /*#__PURE__*/
-  function () {
+  var Address = /*#__PURE__*/function () {
     function Address(address) {
-      _classCallCheck$1(this, Address);
+      _classCallCheck$2(this, Address);
 
-      _defineProperty$1(this, "value", void 0);
+      _defineProperty$3(this, "value", void 0);
 
-      _defineProperty$1(this, "encoded", void 0);
+      _defineProperty$3(this, "encoded", void 0);
 
-      _defineProperty$1(this, "isName", void 0);
+      _defineProperty$3(this, "isName", void 0);
 
       this.isName = false;
 
@@ -44233,10 +49851,15 @@ document.getElementById("create-token").onclick = create_token_click;
       }
     }
 
-    _createClass$1(Address, [{
+    _createClass$2(Address, [{
       key: "asBytes",
       value: function asBytes() {
         return new Uint8Array(this.value);
+      }
+    }, {
+      key: "bytes",
+      get: function get() {
+        return this.asBytes();
       }
     }, {
       key: "toJSON",
@@ -44278,19 +49901,14 @@ document.getElementById("create-token").onclick = create_token_click;
         return this.value.length === 0;
       }
     }, {
-      key: "isSystemAddress",
-      value: function isSystemAddress() {
-        return this.isName && Address.isSystemName(this.toString());
-      }
-    }, {
-      key: "bytes",
-      get: function get() {
-        return this.asBytes();
-      }
-    }, {
       key: "length",
       get: function get() {
         return this.value.length;
+      }
+    }, {
+      key: "isSystemAddress",
+      value: function isSystemAddress() {
+        return this.isName && Address.isSystemName(this.toString());
       }
     }], [{
       key: "decode",
@@ -44357,19 +49975,19 @@ document.getElementById("create-token").onclick = create_token_click;
     return base58.decode(bs58string);
   }
 
-  var TransactionError =
-  /*#__PURE__*/
-  function (_Error) {
+  var TransactionError = /*#__PURE__*/function (_Error) {
     _inherits(TransactionError, _Error);
+
+    var _super = _createSuper(TransactionError);
 
     function TransactionError() {
       _classCallCheck(this, TransactionError);
 
-      return _possibleConstructorReturn(this, _getPrototypeOf(TransactionError).apply(this, arguments));
+      return _super.apply(this, arguments);
     }
 
-    return TransactionError;
-  }(_wrapNativeSuper(Error));
+    return _createClass(TransactionError);
+  }( /*#__PURE__*/_wrapNativeSuper(Error));
 
   function bufferOrB58(input) {
     if (typeof input === 'string') {
@@ -44385,9 +50003,7 @@ document.getElementById("create-token").onclick = create_token_click;
    */
 
 
-  var Tx =
-  /*#__PURE__*/
-  function () {
+  var Tx = /*#__PURE__*/function () {
     /**
      * Map of tx types.
      * Use as Tx.Type.NORMAL, Tx.Type.GOVERNANCE, Tx.Type.REDEPLOY, Tx.Type.FEEDELEGATION
@@ -44428,11 +50044,11 @@ document.getElementById("create-token").onclick = create_token_click;
 
     _createClass(Tx, [{
       key: "inferType",
-
+      value:
       /**
        * Infer a tx type based on body. Can be overriden by exlicitly passing type.
        */
-      value: function inferType() {
+      function inferType() {
         if (!this.to) {
           return Tx.Type.DEPLOY;
         }
@@ -44524,14 +50140,12 @@ document.getElementById("create-token").onclick = create_token_click;
   }();
 
   _defineProperty(Tx, "Type", blockchain_pb_4);
-  var SignedTx =
-  /*#__PURE__*/
-  function (_Tx) {
+  var SignedTx = /*#__PURE__*/function (_Tx) {
     _inherits(SignedTx, _Tx);
 
-    function SignedTx() {
-      var _getPrototypeOf2;
+    var _super = _createSuper(SignedTx);
 
+    function SignedTx() {
       var _this;
 
       _classCallCheck(this, SignedTx);
@@ -44540,7 +50154,7 @@ document.getElementById("create-token").onclick = create_token_click;
         args[_key] = arguments[_key];
       }
 
-      _this = _possibleConstructorReturn(this, (_getPrototypeOf2 = _getPrototypeOf(SignedTx)).call.apply(_getPrototypeOf2, [this].concat(args)));
+      _this = _super.call.apply(_super, [this].concat(args));
 
       _defineProperty(_assertThisInitialized(_this), "sign", void 0);
 
@@ -44549,15 +50163,13 @@ document.getElementById("create-token").onclick = create_token_click;
       return _this;
     }
 
-    return SignedTx;
+    return _createClass(SignedTx);
   }(Tx);
 
   /**
    * Accounts controller. It is exposed at `aergoClient.accounts`.
    */
-  var Accounts =
-  /*#__PURE__*/
-  function () {
+  var Accounts = /*#__PURE__*/function () {
     function Accounts(aergo) {
       _classCallCheck(this, Accounts);
 
@@ -44744,9 +50356,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return Accounts;
   }();
 
-  var Block =
-  /*#__PURE__*/
-  function () {
+  var Block = /*#__PURE__*/function () {
     function Block(data) {
       _classCallCheck(this, Block);
 
@@ -44828,9 +50438,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return Block;
   }();
 
-  var BlockMetadata =
-  /*#__PURE__*/
-  function () {
+  var BlockMetadata = /*#__PURE__*/function () {
     function BlockMetadata(data) {
       _classCallCheck(this, BlockMetadata);
 
@@ -44885,9 +50493,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return BlockMetadata;
   }();
 
-  var ChainInfo =
-  /*#__PURE__*/
-  function () {
+  var ChainInfo = /*#__PURE__*/function () {
     function ChainInfo(data) {
       _classCallCheck(this, ChainInfo);
 
@@ -45508,9 +51114,7 @@ document.getElementById("create-token").onclick = create_token_click;
    * You should not need to build these yourself, they are returned from contract instance functions and
    * can be passed to the client.
    */
-  var FunctionCall =
-  /*#__PURE__*/
-  function () {
+  var FunctionCall = /*#__PURE__*/function () {
     function FunctionCall(contractInstance, definition, args) {
       _classCallCheck(this, FunctionCall);
 
@@ -45617,9 +51221,7 @@ document.getElementById("create-token").onclick = create_token_click;
    *     })
    */
 
-  var StateQuery =
-  /*#__PURE__*/
-  function () {
+  var StateQuery = /*#__PURE__*/function () {
     function StateQuery(contractInstance, storageKeys, compressed, root) {
       _classCallCheck(this, StateQuery);
 
@@ -45681,9 +51283,7 @@ document.getElementById("create-token").onclick = create_token_click;
    * 
    */
 
-  var Contract =
-  /*#__PURE__*/
-  function () {
+  var Contract = /*#__PURE__*/function () {
     function Contract(data) {
       _classCallCheck(this, Contract);
 
@@ -45718,13 +51318,13 @@ document.getElementById("create-token").onclick = create_token_click;
 
     _createClass(Contract, [{
       key: "setAddress",
-
+      value:
       /**
        * Set address of contract instance
        * @param {Address|string} address 
        * @return {Contract} contract instance
        */
-      value: function setAddress(address) {
+      function setAddress(address) {
         this.address = new Address(address);
         return this;
       }
@@ -45739,9 +51339,8 @@ document.getElementById("create-token").onclick = create_token_click;
       value: function loadAbi(abi) {
         var _this = this;
 
-        var _iteratorNormalCompletion = true;
-        var _didIteratorError = false;
-        var _iteratorError = undefined;
+        var _iterator = _createForOfIteratorHelper(abi.functions),
+            _step;
 
         try {
           var _loop = function _loop() {
@@ -45752,26 +51351,19 @@ document.getElementById("create-token").onclick = create_token_click;
                 args[_key] = arguments[_key];
               }
 
-              return new FunctionCall(_this, definition, args);
+              return new FunctionCall({
+                address: _this.address
+              }, definition, args);
             };
           };
 
-          for (var _iterator = abi.functions[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+          for (_iterator.s(); !(_step = _iterator.n()).done;) {
             _loop();
           }
         } catch (err) {
-          _didIteratorError = true;
-          _iteratorError = err;
+          _iterator.e(err);
         } finally {
-          try {
-            if (!_iteratorNormalCompletion && _iterator["return"] != null) {
-              _iterator["return"]();
-            }
-          } finally {
-            if (_didIteratorError) {
-              throw _iteratorError;
-            }
-          }
+          _iterator.f();
         }
 
         return this;
@@ -45867,9 +51459,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return Contract;
   }();
 
-  var Event =
-  /*#__PURE__*/
-  function () {
+  var Event = /*#__PURE__*/function () {
     function Event(data) {
       _classCallCheck(this, Event);
 
@@ -45921,9 +51511,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return obj instanceof Map;
   }
 
-  var FilterInfo =
-  /*#__PURE__*/
-  function () {
+  var FilterInfo = /*#__PURE__*/function () {
     function FilterInfo(data) {
       _classCallCheck(this, FilterInfo);
 
@@ -46010,13 +51598,11 @@ document.getElementById("create-token").onclick = create_token_click;
     return FilterInfo;
   }();
 
-  function keys$1(o) {
+  function keys$2(o) {
     return Object.keys(o);
   }
 
-  var Peer =
-  /*#__PURE__*/
-  function () {
+  var Peer = /*#__PURE__*/function () {
     function Peer(data) {
       _classCallCheck(this, Peer);
 
@@ -46026,20 +51612,20 @@ document.getElementById("create-token").onclick = create_token_click;
     }
 
     _createClass(Peer, [{
-      key: "toGrpc",
-      value: function toGrpc() {
-        throw new Error('Not implemented');
-      }
-    }, {
       key: "acceptedroleLabel",
       get: function get() {
         var _this = this;
 
         var roles = Peer.Role;
-        var key = keys$1(roles).find(function (key) {
+        var key = keys$2(roles).find(function (key) {
           return roles[key] === _this.acceptedrole;
         });
         return key || '';
+      }
+    }, {
+      key: "toGrpc",
+      value: function toGrpc() {
+        throw new Error('Not implemented');
       }
     }], [{
       key: "fromGrpc",
@@ -46069,9 +51655,7 @@ document.getElementById("create-token").onclick = create_token_click;
 
   _defineProperty(Peer, "Role", node_pb_1);
 
-  var State =
-  /*#__PURE__*/
-  function () {
+  var State = /*#__PURE__*/function () {
     function State(data) {
       _classCallCheck(this, State);
 
@@ -46109,9 +51693,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return State;
   }();
 
-  var ContractVarProof =
-  /*#__PURE__*/
-  function () {
+  var ContractVarProof = /*#__PURE__*/function () {
     function ContractVarProof(data) {
       _classCallCheck(this, ContractVarProof);
 
@@ -46169,9 +51751,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return ContractVarProof;
   }();
 
-  var AccountProof =
-  /*#__PURE__*/
-  function () {
+  var AccountProof = /*#__PURE__*/function () {
     function AccountProof(data) {
       _classCallCheck(this, AccountProof);
 
@@ -46219,9 +51799,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return AccountProof;
   }();
 
-  var StateQueryProof =
-  /*#__PURE__*/
-  function () {
+  var StateQueryProof = /*#__PURE__*/function () {
     function StateQueryProof(data) {
       _classCallCheck(this, StateQueryProof);
 
@@ -46297,9 +51875,7 @@ document.getElementById("create-token").onclick = create_token_click;
     return _marshalHashOrNumberToSingleBytes.apply(this, arguments);
   }
 
-  var AergoClient =
-  /*#__PURE__*/
-  function () {
+  var AergoClient = /*#__PURE__*/function () {
     // @ts-ignore
 
     /**
@@ -46434,9 +52010,7 @@ document.getElementById("create-token").onclick = create_token_click;
       value: function blockchain() {
         var _this = this;
 
-        return waterfall([marshalEmpty, this.grpcMethod(this.client.client.blockchain),
-        /*#__PURE__*/
-        function () {
+        return waterfall([marshalEmpty, this.grpcMethod(this.client.client.blockchain), /*#__PURE__*/function () {
           var _unmarshal = _asyncToGenerator(function* (response) {
             if (typeof _this.chainIdHash === 'undefined') {
               // set chainIdHash automatically
@@ -46467,9 +52041,7 @@ document.getElementById("create-token").onclick = create_token_click;
     }, {
       key: "getChainInfo",
       value: function getChainInfo() {
-        return waterfall([marshalEmpty, this.grpcMethod(this.client.client.getChainInfo),
-        /*#__PURE__*/
-        function () {
+        return waterfall([marshalEmpty, this.grpcMethod(this.client.client.getChainInfo), /*#__PURE__*/function () {
           var _unmarshal2 = _asyncToGenerator(function* (response) {
             return ChainInfo.fromGrpc(response);
           });
@@ -46490,9 +52062,7 @@ document.getElementById("create-token").onclick = create_token_click;
       key: "getNodeState",
       value: function getNodeState(component) {
         var timeout = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 5;
-        return waterfall([
-        /*#__PURE__*/
-        function () {
+        return waterfall([/*#__PURE__*/function () {
           var _marshal = _asyncToGenerator(function* (component) {
             var params = new rpc_pb_14();
             params.setTimeout(fromNumber(timeout));
@@ -46509,9 +52079,7 @@ document.getElementById("create-token").onclick = create_token_click;
           }
 
           return marshal;
-        }(), this.grpcMethod(this.client.client.nodeState),
-        /*#__PURE__*/
-        function () {
+        }(), this.grpcMethod(this.client.client.nodeState), /*#__PURE__*/function () {
           var _unmarshal3 = _asyncToGenerator(function* (response) {
             return JSON.parse(Buffer$1.from(response.getValue_asU8()).toString());
           });
@@ -46573,9 +52141,7 @@ document.getElementById("create-token").onclick = create_token_click;
     }, {
       key: "getBlock",
       value: function getBlock(hashOrNumber) {
-        return waterfall([marshalHashOrNumberToSingleBytes, this.grpcMethod(this.client.client.getBlock),
-        /*#__PURE__*/
-        function () {
+        return waterfall([marshalHashOrNumberToSingleBytes, this.grpcMethod(this.client.client.getBlock), /*#__PURE__*/function () {
           var _unmarshal4 = _asyncToGenerator(function* (response) {
             return Block.fromGrpc(response);
           });
@@ -46597,9 +52163,7 @@ document.getElementById("create-token").onclick = create_token_click;
     }, {
       key: "getBlockMetadata",
       value: function getBlockMetadata(hashOrNumber) {
-        return waterfall([marshalHashOrNumberToSingleBytes, this.grpcMethod(this.client.client.getBlockMetadata),
-        /*#__PURE__*/
-        function () {
+        return waterfall([marshalHashOrNumberToSingleBytes, this.grpcMethod(this.client.client.getBlockMetadata), /*#__PURE__*/function () {
           var _unmarshal5 = _asyncToGenerator(function* (response) {
             return BlockMetadata.fromGrpc(response);
           });
@@ -46846,12 +52410,12 @@ document.getElementById("create-token").onclick = create_token_click;
           var txList = new blockchain_pb_1();
           var txs = Array.isArray(tx) ? tx : [tx];
           var txCount = txs.length;
-          var _iteratorNormalCompletion = true;
-          var _didIteratorError = false;
-          var _iteratorError = undefined;
+
+          var _iterator = _createForOfIteratorHelper(txs.entries()),
+              _step;
 
           try {
-            for (var _iterator = txs.entries()[Symbol.iterator](), _step; !(_iteratorNormalCompletion = (_step = _iterator.next()).done); _iteratorNormalCompletion = true) {
+            for (_iterator.s(); !(_step = _iterator.n()).done;) {
               var _step$value = _slicedToArray(_step.value, 2),
                   index = _step$value[0],
                   _tx = _step$value[1];
@@ -46861,18 +52425,9 @@ document.getElementById("create-token").onclick = create_token_click;
               txList.addTxs(_tx2.toGrpc(), index);
             }
           } catch (err) {
-            _didIteratorError = true;
-            _iteratorError = err;
+            _iterator.e(err);
           } finally {
-            try {
-              if (!_iteratorNormalCompletion && _iterator["return"] != null) {
-                _iterator["return"]();
-              }
-            } finally {
-              if (_didIteratorError) {
-                throw _iteratorError;
-              }
-            }
+            _iterator.f();
           }
 
           _this4.client.client.commitTX(txList, function (err, result) {
@@ -46949,9 +52504,9 @@ document.getElementById("create-token").onclick = create_token_click;
     }, {
       key: "getStaking",
       value: function getStaking(address) {
-        var singleBytes = new rpc_pb_4();
-        singleBytes.setValue(Uint8Array.from(new Address(address).asBytes()));
-        return promisify(this.client.client.getStaking, this.client.client)(singleBytes).then(function (grpcObject) {
+        var accountAddress = new rpc_pb_1();
+        accountAddress.setValue(Uint8Array.from(new Address(address).asBytes()));
+        return promisify(this.client.client.getStaking, this.client.client)(accountAddress).then(function (grpcObject) {
           return {
             amount: new Amount(grpcObject.getAmount_asU8()),
             when: grpcObject.getWhen()
@@ -46980,7 +52535,10 @@ document.getElementById("create-token").onclick = create_token_click;
             blockno: obj.blockno,
             blockhash: Block.encodeHash(grpcObject.getBlockhash_asU8()),
             feeDelegation: obj.feedelegation,
-            gasused: obj.gasused
+            gasused: obj.gasused,
+            events: grpcObject.getEventsList().map(function (item) {
+              return Event.fromGrpc(item);
+            })
           };
           return ret;
         });
@@ -47004,9 +52562,7 @@ document.getElementById("create-token").onclick = create_token_click;
         var started = new Date();
         var retryCount = 0;
 
-        var retryLoad =
-        /*#__PURE__*/
-        function () {
+        var retryLoad = /*#__PURE__*/function () {
           var _ref = _asyncToGenerator(function* () {
             try {
               return yield _this5.getTransactionReceipt(txhash);
@@ -47042,14 +52598,34 @@ document.getElementById("create-token").onclick = create_token_click;
         return retryLoad();
       }
       /**
-       * Query contract ABI
-       * @param {FunctionCall} functionCall call details
+       * Query contract, either through ABI or manually.
+       * Either pass a FunctionCall object (created through contract interface)
+       * or a manual call (address, name, ...args).
        * @returns {Promise<object>} result of query
        */
 
     }, {
       key: "queryContract",
-      value: function queryContract(functionCall) {
+      value: function queryContract() {
+        var functionCall;
+
+        for (var _len = arguments.length, args = new Array(_len), _key = 0; _key < _len; _key++) {
+          args[_key] = arguments[_key];
+        }
+
+        if (args[0] instanceof Address || typeof args[0] === 'string') {
+          var _address = args[0],
+              name = args[1],
+              callArgs = args.slice(2);
+          functionCall = new FunctionCall({
+            address: new Address(_address)
+          }, {
+            name: name
+          }, callArgs);
+        } else {
+          functionCall = args[0];
+        }
+
         var query = functionCall.toGrpc();
         return promisify(this.client.client.queryContract, this.client.client)(query).then(function (grpcObject) {
           return JSON.parse(Buffer$1.from(grpcObject.getValue()).toString());
@@ -47210,9 +52786,7 @@ document.getElementById("create-token").onclick = create_token_click;
     }, {
       key: "getConsensusInfo",
       value: function getConsensusInfo() {
-        return waterfall([marshalEmpty, this.grpcMethod(this.client.client.getConsensusInfo),
-        /*#__PURE__*/
-        function () {
+        return waterfall([marshalEmpty, this.grpcMethod(this.client.client.getConsensusInfo), /*#__PURE__*/function () {
           var _unmarshal6 = _asyncToGenerator(function* (response) {
             var obj = response.toObject();
             var result = {
@@ -47239,9 +52813,7 @@ document.getElementById("create-token").onclick = create_token_click;
     }, {
       key: "getServerInfo",
       value: function getServerInfo(keys) {
-        return waterfall([
-        /*#__PURE__*/
-        function () {
+        return waterfall([/*#__PURE__*/function () {
           var _marshal2 = _asyncToGenerator(function* (keys) {
             var params = new rpc_pb_15();
 
@@ -47257,9 +52829,7 @@ document.getElementById("create-token").onclick = create_token_click;
           }
 
           return marshal;
-        }(), this.grpcMethod(this.client.client.getServerInfo),
-        /*#__PURE__*/
-        function () {
+        }(), this.grpcMethod(this.client.client.getServerInfo), /*#__PURE__*/function () {
           var _unmarshal7 = _asyncToGenerator(function* (response) {
             var obj = response.toObject();
             var result = {
@@ -47267,12 +52837,12 @@ document.getElementById("create-token").onclick = create_token_click;
               statusMap: new Map(obj.statusMap)
             };
             var configMap = new Map(obj.configMap);
-            var _iteratorNormalCompletion2 = true;
-            var _didIteratorError2 = false;
-            var _iteratorError2 = undefined;
+
+            var _iterator2 = _createForOfIteratorHelper(configMap),
+                _step2;
 
             try {
-              for (var _iterator2 = configMap[Symbol.iterator](), _step2; !(_iteratorNormalCompletion2 = (_step2 = _iterator2.next()).done); _iteratorNormalCompletion2 = true) {
+              for (_iterator2.s(); !(_step2 = _iterator2.n()).done;) {
                 var _step2$value = _slicedToArray(_step2.value, 2),
                     key = _step2$value[0],
                     item = _step2$value[1];
@@ -47280,18 +52850,9 @@ document.getElementById("create-token").onclick = create_token_click;
                 result.configMap.set(key, new Map(item.propsMap));
               }
             } catch (err) {
-              _didIteratorError2 = true;
-              _iteratorError2 = err;
+              _iterator2.e(err);
             } finally {
-              try {
-                if (!_iteratorNormalCompletion2 && _iterator2["return"] != null) {
-                  _iterator2["return"]();
-                }
-              } finally {
-                if (_didIteratorError2) {
-                  throw _iteratorError2;
-                }
-              }
+              _iterator2.f();
             }
 
             return result;
@@ -50107,9 +55668,7 @@ document.getElementById("create-token").onclick = create_token_click;
    * This is compatible with Web browsers.
    * Note that the transport is considerably slower than over standard GRPC.
    */
-  var GrpcWebProvider =
-  /*#__PURE__*/
-  function () {
+  var GrpcWebProvider = /*#__PURE__*/function () {
     /**
      * .. code-block:: javascript
      * 
