@@ -189,17 +189,15 @@ async function create_token(){
     return false
   }
 
-  var call = {
-    Name: "new_token",
-    Args: [name, symbol, decimals, initial_supply, options, owner]
-  }
-
   var txdata = {
-    type: 5, // call
+    type: 5,  // CALL
     from: account_address,
-    to: factory_address,
+    to:   factory_address,
     amount: 0,
-    payload_json: call
+    payload_json: {
+      Name: "new_token",
+      Args: [name, symbol, decimals, initial_supply, options, owner]
+    }
   }
 
   startTxSendRequest(txdata);

@@ -284,17 +284,15 @@ async function lock_tokens(){
     }
   }
 
-  var call = {
-    Name: "transfer",
-    Args: [token_locker_address, amount, interval]
-  }
-
   var txdata = {
-    type: 5, // call
+    type: 5,  // CALL
     from: account_address,
     to: token_address,
     amount: 0,
-    payload_json: call
+    payload_json: {
+      Name: "transfer",
+      Args: [token_locker_address, amount, interval]
+    }
   }
 
   startTxSendRequest(txdata, 'Your tokens were locked!');
@@ -302,17 +300,15 @@ async function lock_tokens(){
 
 window.withdraw_clicked = async function(index){
 
-  var call = {
-    Name: "withdraw",
-    Args: [index]
-  }
-
   var txdata = {
-    type: 5, // call
+    type: 5,  // CALL
     from: account_address,
     to: token_locker_address,
     amount: 0,
-    payload_json: call
+    payload_json: {
+      Name: "withdraw",
+      Args: [index]
+    }
   }
 
   startTxSendRequest(txdata, 'Your tokens were withdrawn!');
