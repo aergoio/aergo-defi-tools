@@ -80,7 +80,7 @@ async function startTxSendRequest(txdata) {
     } else if (chainId == "alpha.aergo.io") {
       url = "alpha-api-http.aergo.io"
     }
-    url = 'http://' + url + ':7845'
+    url = 'https://' + url
     aergo = new herajs.AergoClient({}, new herajs.GrpcWebProvider({url: url}))
   }
 
