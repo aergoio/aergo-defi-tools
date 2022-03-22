@@ -384,6 +384,7 @@ async function update_list(){
   var index
 
   $('.table tbody tr').remove()
+  $('#loader').show()
 
   try {
     locks = await aergo.queryContract(token_locker_address, "locks_per_account", account_address)
@@ -430,6 +431,8 @@ async function update_list(){
     $('.table tbody').append(row)
 
   }
+
+  $('#loader').hide()
 
 }
 

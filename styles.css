@@ -8124,6 +8124,33 @@ fa-icon .fa-2x {
 
 
 
+.loader1 {
+  display: inline-block;
+  width: 60px;
+  height: 60px;
+}
+.loader1:after {
+  content: " ";
+  display: block;
+  width: 44px;
+  height: 44px;
+  margin: 8px;
+  border-radius: 50%;
+  border: 6px solid rgb(229,0,125);
+  border-color: rgb(229,0,125) transparent rgb(229,0,125) transparent;
+  animation: loader1 1.2s linear infinite;
+}
+@keyframes loader1 {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+
+
 #no-extension {
 	display: block;
 	position: absolute;
