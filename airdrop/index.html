@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Aergo - Token AirDrop</title>
+
+<link rel="stylesheet" href="/styles.css"/>
+
+<link rel="icon" href="/images/favicon.png" sizes="32x32" />
+<link rel="icon" href="/images/favicon.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/images/favicon.png" />
+<meta name="msapplication-TileImage" content="/images/favicon.png" />
+
+</head>
+<body>
+
+<div class="container px-5 my-5">
+
+<div class="row align-items-stretch mb-4">
+
+<div class="col-lg-6">
+
+<!-- content at the left goes here -->
+     <label class="form-label d-block">AirDrop tokens to many recipients</label>
+     <label class="form-label d-block">For security, each recipient must withdraw its tokens</label>
+
+</div>
+<div class="col-lg-6">
+  <!--div class="text-center mb-2 fw-700 small text-uppercase">Create Token</div-->
+
+  <div class="card mb-4" id="card1">
+    <div class="card-header py-3">
+      <h6 class="m-0 font-weight-bold text-primary text-center">Create your AirDrop</h6>
+    </div>
+    <div class="card-body">
+        <div class="mb-4">
+            <label class="form-label d-block">The AirDrop is made in 3 steps:</label>
+            <label class="form-label d-block"><strong>1.</strong> Create the AirDrop contract</label>
+            <label class="form-label d-block"><strong>2.</strong> Add recipients</label>
+            <label class="form-label d-block"><strong>3.</strong> Transfer tokens to the contract</label>
+        </div>
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="connect-wallet" type="button">Connect Wallet</button>
+        </div>
+    </div>
+  </div>
+
+
+  <div class="card mb-4" id="card2" style="display:none">
+    <div class="card-header py-3">
+      <h6 class="m-0 font-weight-bold text-primary text-center">Step 1</h6>
+    </div>
+    <div class="card-body">
+        <div class="form-floating mb-3">
+            <input class="form-control" id="tokenAddress" type="text" placeholder="Token Address" />
+            <label for="tokenAddress">Token Address</label>
+        </div>
+        <div class="mb-3" id="token_info" style="display:none">
+            <label class="form-label d-block" id="tokenName">Name:</label>
+            <label class="form-label d-block" id="tokenSymbol">Symbol:</label>
+        </div>
+        <div class="form-floating mb-3">
+            <select class="form-select" id="airdrop-type" aria-label="Type">
+                <option value="same">Same amount for all</option>
+                <option value="diff">Different amount for each</option>
+            </select>
+            <label for="airdrop-type">Type</label>
+        </div>
+        <div class="form-floating mb-3" id="amount-div">
+            <input class="form-control" id="amount" type="text" placeholder="Amount" />
+            <label for="amount">Amount</label>
+        </div>
+
+        <div class="d-grid form-floating">
+            <button class="btn btn-primary btn-lg" id="create-contract" type="button">Create Contract</button>
+        </div>
+    </div>
+  </div>
+
+
+  <div class="card mb-4" id="card3" style="display:none">
+    <div class="card-header py-3">
+      <h6 class="m-0 font-weight-bold text-primary text-center">Step 2</h6>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            <label class="form-label d-block">Paste the list of recipients bellow with one address per line</label>
+            <label class="form-label d-block">If different amount, put the amount after the address, separated by a comma</label>
+        </div>
+        <div class="form-floating mb-4">
+            <textarea class="form-control" id="recipients" type="text" placeholder="Recipients"></textarea>
+        </div>
+        <div class="mb-4">
+            <label class="form-label d-block">Amount to transfer: <span id="total-amount1"/></label>
+        </div>
+
+        <div class="d-grid form-floating">
+            <button class="btn btn-primary btn-lg" id="add-recipients" type="button">Add Recipients</button>
+        </div>
+    </div>
+  </div>
+
+
+  <div class="card mb-4" id="card4" style="display:none">
+    <div class="card-header py-3">
+      <h6 class="m-0 font-weight-bold text-primary text-center">Step 3</h6>
+    </div>
+    <div class="card-body">
+        <div class="mb-4">
+            <label class="form-label d-block">Transfer tokens to the AirDrop contract</label>
+            <label class="form-label d-block">Amount to transfer: <span id="total-amount2"/></label>
+        </div>
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="transfer-tokens" type="button">Transfer Tokens</button>
+        </div>
+    </div>
+  </div>
+
+
+  <div class="card mb-4" id="card5" style="display:none">
+    <div class="card-header py-3">
+      <h6 class="m-0 font-weight-bold text-primary text-center">Done</h6>
+    </div>
+    <div class="card-body">
+        <div class="">
+            <label class="form-label d-block" style="text-align:center">Your AirDrop is ready!</label>
+            <label class="form-label d-block">Save this <a id="airdrop-address" href="">address</a></label>
+            <label class="form-label d-block">People can claim using the <a href="">AirDrop Checker</a></label>
+            <label class="form-label d-block">You can put one on your site using <a href="">this code</a></label>
+        </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+</div>
+
+<script src="bundle.js" type="text/javascript" charset="utf-8"></script>
+
+</body>
+</html>
