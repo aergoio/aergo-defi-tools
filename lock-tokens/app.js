@@ -397,6 +397,8 @@ async function update_list(){
     return
   }
 
+  if (!locks) locks = [];
+
   //locks.forEach(async function(lock){
   for(index=0; index<locks.length; index++){
 
