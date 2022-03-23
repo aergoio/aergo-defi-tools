@@ -9,7 +9,7 @@ var showbox = false;
 
 const airdrop_factory_mainnet = ""
 const airdrop_factory_testnet = "Amgyrri9XzGCcDN9jD1KABnhNwD9xc6uBjsLRvvETTHKub5ZyEUG"
-const airdrop_factory_alphanet = ""
+const airdrop_factory_alphanet = "AmhnEsiu8SGPn6DJ6QDMMAC1xFaovxXG5Vpjw3G78s1Wca84Rvvs"
 var airdrop_factory_address
 
 const multicall_mainnet = "AmhAzXNo7o9jK7Wsq6v3DcJcY7vvsD8EYPhuWNHq5RFFYxwJR5kX"
