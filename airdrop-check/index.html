@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Aergo - AirDrop Checker</title>
+
+<link rel="stylesheet" href="/styles.css"/>
+
+<link rel="icon" href="/images/favicon.png" sizes="32x32" />
+<link rel="icon" href="/images/favicon.png" sizes="192x192" />
+<link rel="apple-touch-icon" href="/images/favicon.png" />
+<meta name="msapplication-TileImage" content="/images/favicon.png" />
+
+</head>
+<body>
+
+<div class="container px-5 my-5">
+
+<div class="row align-items-stretch mb-4">
+
+<div class="col-lg-6">
+</div>
+<div class="col-lg-6">
+
+  <div class="card mb-4" id="card1">
+    <div class="card-body">
+        <div class="mb-3">
+            <label class="form-label d-block">Check whether you have airdrop to claim</label>
+        </div>
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="connect-wallet" type="button">Connect Wallet</button>
+        </div>
+    </div>
+  </div>
+
+  <div class="card mb-4" id="card2" style="display:none">
+    <div class="card-header py-3">
+      <h6 class="m-0 font-weight-bold text-primary text-center">Token AirDrop</h6>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+
+            <table class="table">
+              <thead>
+                <tr>
+                  <th scope="col">Token</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">&nbsp;</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+
+            <label class="form-label text-center" style="display:none" id='none-available'>No AirDrops available for your account</label>
+
+            <div id="loader" class="loader1"></div>
+
+        </div>
+    </div>
+  </div>
+
+</div>
+</div>
+</div>
+
+<script src="bundle.js" type="text/javascript" charset="utf-8"></script>
+
+</body>
+</html>
