@@ -14,8 +14,8 @@ var timer_id;
 var showbox = false;
 
 const airdrop_factory_mainnet = ""
-const airdrop_factory_testnet = "AmhqCJ8DTqhzXSYACD3kXMNYqHEAUfQCPFMqr2aMhGeZV6uux2za"
-const airdrop_factory_alphanet = ""
+const airdrop_factory_testnet = "Amgyrri9XzGCcDN9jD1KABnhNwD9xc6uBjsLRvvETTHKub5ZyEUG"
+const airdrop_factory_alphanet = "AmhnEsiu8SGPn6DJ6QDMMAC1xFaovxXG5Vpjw3G78s1Wca84Rvvs"
 var airdrop_factory_address
 var airdrop_address
 
@@ -371,6 +371,8 @@ function update_total_amount(){
   var amount_str = to_decimal_str(total_amount, decimals) + " " + symbol
   document.getElementById('total-amount1').innerHTML = amount_str
   document.getElementById('total-amount2').innerHTML = amount_str
+
+  document.getElementById('num-recipients').innerHTML = recipients.length
 
   return recipients
 }
