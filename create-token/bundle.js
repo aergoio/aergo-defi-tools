@@ -133,8 +133,8 @@ function encode_utf8(s) {
 
 async function create_token(){
 
-  const factory_address_testnet = "AmgXrg6JC7NT4URYhop1G4QaQme9WtdV7CX6dvawJekEk52bBBZw"
-  const factory_address_mainnet = ""
+  const factory_address_testnet = "AmhVVPAfP7sxoRHwuuoXkgW44DNmAY222fJ6n7pv916PMyXGamBY"
+  const factory_address_mainnet = "Amg1nfN8U8u8GarcEXHVNJL2MfYMWK9HP6XuNHHmbP64Bx2uTyvP"
   var factory_address
 
   var name = document.getElementById("tokenName").value
@@ -180,8 +180,8 @@ async function create_token(){
     factory_address = factory_address_testnet
   } else if (chainId == "aergo.io") {
     factory_address = factory_address_mainnet
-  //} else if (chainId == "alpha.aergo.io") {
-  //  factory_address = factory_address_alphanet
+  } else if (chainId == "alpha.aergo.io") {
+    factory_address = factory_address_alphanet
   } else {
     swal.fire({
       icon: 'error',
