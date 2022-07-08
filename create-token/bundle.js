@@ -133,8 +133,8 @@ function encode_utf8(s) {
 
 async function create_token(){
 
-  const factory_address_testnet = "AmhVVPAfP7sxoRHwuuoXkgW44DNmAY222fJ6n7pv916PMyXGamBY"
-  const factory_address_mainnet = "Amg1nfN8U8u8GarcEXHVNJL2MfYMWK9HP6XuNHHmbP64Bx2uTyvP"
+  const factory_address_testnet = "AmgSDUteTX3oRdQKUqChQjjdw5roEuxtFxYh8DLpQ29PRNeBWtjj"
+  const factory_address_mainnet = ""
   var factory_address
 
   var name = document.getElementById("tokenName").value
