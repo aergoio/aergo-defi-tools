@@ -211,6 +211,17 @@ function create_token_click(){
 
 document.getElementById("create-token").onclick = create_token_click;
 
+document.getElementById("mintable").addEventListener('change', function() {
+
+  if (this.checked) {
+    document.getElementById("maxSupply").disabled = false;
+  } else {
+    document.getElementById("maxSupply").disabled = true;
+    document.getElementById("maxSupply").value = "";
+  }
+
+});
+
 },{"@herajs/client":2,"jquery":6,"sweetalert2":7}],2:[function(require,module,exports){
 (function (global,Buffer){(function (){
 /*!
