@@ -1,0 +1,16 @@
+{
+    "presets": [
+        ["@babel/preset-env", {
+            "targets": {
+                "node": "current"
+            },
+            "exclude": ["transform-regenerator"]
+        }],
+        "@babel/typescript"
+    ],
+    "plugins": [
+        "@babel/plugin-proposal-object-rest-spread",
+        "@babel/proposal-class-properties"
+    ],
+    "retainLines": true
+}
