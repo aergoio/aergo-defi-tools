@@ -220,3 +220,4 @@ document.getElementById("mintable").addEventListener('change', function() {
   }
 
 });
+

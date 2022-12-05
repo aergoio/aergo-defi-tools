@@ -1658,10 +1658,10 @@ textarea.form-control {
 }
 
 .form-check {
-	display: block;
+	display: flex;
 	min-height: 1.5rem;
 	padding-left: 1.5em;
-	margin-bottom: .125rem
+	margin-bottom: .75rem
 }
 
 .form-check .form-check-input {
@@ -1683,7 +1683,8 @@ textarea.form-control {
 	-moz-appearance: none;
 	appearance: none;
 	-webkit-print-color-adjust: exact;
-	color-adjust: exact
+	color-adjust: exact;
+	margin-right: 10px;
 }
 
 .form-check-input[type=checkbox] {
@@ -1727,6 +1728,10 @@ textarea.form-control {
 	pointer-events: none;
 	filter: none;
 	opacity: .5
+}
+
+.form-check-label {
+	margin-right: 10px;
 }
 
 .form-check-input:disabled~.form-check-label,.form-check-input[disabled]~.form-check-label {
@@ -8912,3 +8917,38 @@ fa-icon .fa-2x {
 	padding-left: 5px;
 	padding-right: 10px;
 }
+
+
+/* Tooltip container */
+.custom-tooltip {
+	position: relative;
+	display: inline-block;
+}
+
+/*Tooltip icon*/
+.info-icon{
+	cursor: default;
+}
+
+/* Tooltip text */
+.custom-tooltip .tooltip-text {
+	visibility: hidden;
+	width: max-content;
+	max-width: 15rem;
+	background-color: black;
+	color: #fff;
+	text-align: left;
+	padding: 1rem;
+	border-radius: 6px;
+	position: absolute;
+	z-index: 1;
+	top: -5px;
+	left: 105%;
+}
+
+/* Show the tooltip text when you mouse over the tooltip container */
+.custom-tooltip:hover .tooltip-text {
+	visibility: visible;
+}
+
+

@@ -17,7 +17,8 @@
 
 <div class="row align-items-stretch mb-4">
 
-<div class="col-lg-6">
+<div class="col-lg-6" >
+
 </div>
 <div class="col-lg-6">
   <!--div class="text-center mb-2 fw-700 small text-uppercase">Create Token</div-->
@@ -45,29 +46,54 @@
         </div>
         <div class="mb-3" id="extensions">
             <label class="form-label d-block">Extensions</label>
-            <div class="form-check">
+            <div class="form-check" >
                 <input class="form-check-input" id="mintable" type="checkbox" name="extensions" />
                 <label class="form-check-label" for="mintable">Can Mint</label>
+                <div class="custom-tooltip" onclick="">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text">Enables additional token minting after initial token creation to increase supply</span>
+                </div>
+
             </div>
             <div class="form-check">
                 <input class="form-check-input" id="burnable" type="checkbox" name="extensions" />
                 <label class="form-check-label" for="burnable">Can Burn</label>
+                <div class="custom-tooltip" onclick="">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" >Enables token burning after initial token creation to decrease supply</span>
+                </div>
             </div>
             <div class="form-check">
                 <input class="form-check-input" id="blacklist" type="checkbox" name="extensions" />
                 <label class="form-check-label" for="blacklist">Can Blacklist</label>
+                <div class="custom-tooltip" onclick="">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" >Specifies whether individual accounts such as malicious actors can be blacklisted after initial token creation. Be aware that enabling blacklisting gives central authority to the token creator</span>
+                </div>
             </div>
             <div class="form-check">
                 <input class="form-check-input" id="pausable" type="checkbox" name="extensions" />
                 <label class="form-check-label" for="pausable">Can Pause</label>
+                <div class="custom-tooltip" onclick="">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text">Specifies whether your token and all associated operations can be halted and resumed whenever needed. This can be useful in case of a vulnerability or a malicious attack. Be aware that enabling pausing gives central authority to the token creator</span>
+                </div>
             </div>
             <div class="form-check">
                 <input class="form-check-input" id="all_approval" type="checkbox" name="extensions" />
                 <label class="form-check-label" for="all_approval">All Approval</label>
+                <div class="custom-tooltip" onclick="">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" >This is just placeholder text for the tooltip</span>
+                </div>
             </div>
             <div class="form-check">
                 <input class="form-check-input" id="limited_approval" type="checkbox" name="extensions" />
                 <label class="form-check-label" for="limited_approval">Limited Approval</label>
+                <div class="custom-tooltip" onclick="">
+                    <span class="info-icon">ⓘ</span>
+                    <span class="tooltip-text" >This is just placeholder text for the tooltip</span>
+                </div>
             </div>
         </div>
         <div class="form-floating mb-3">
