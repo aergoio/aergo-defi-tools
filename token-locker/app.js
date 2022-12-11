@@ -194,6 +194,7 @@ async function lock_tokens(){
 
   var token_address = document.getElementById("tokenAddress").value
   var amount = document.getElementById("amount").value
+  var recipient = document.getElementById("recipient").value
   var interval
 
   if (!token_address || token_address == '') {
@@ -212,6 +213,18 @@ async function lock_tokens(){
       text: 'The token address is invalid'
     })
     return false
+  }
+
+  if (recipient) {
+    try {
+      herajs.Address.decode(recipient)
+    } catch (e) {
+      swal.fire({
+        icon: 'error',
+        text: 'The recipient address is invalid'
+      })
+      return false
+    }
   }
 
   if (!amount || amount == '') {
@@ -284,6 +297,12 @@ async function lock_tokens(){
     }
   }
 
+  if (recipient) {
+    var args = [token_locker_address, amount, interval, recipient]
+  } else {
+    var args = [token_locker_address, amount, interval]
+  }
+
   var txdata = {
     type: 5,  // CALL
     from: account_address,
@@ -291,7 +310,7 @@ async function lock_tokens(){
     amount: 0,
     payload_json: {
       Name: "transfer",
-      Args: [token_locker_address, amount, interval]
+      Args: args
     }
   }
 
