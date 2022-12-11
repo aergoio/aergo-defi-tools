@@ -15,30 +15,68 @@
 </head>
 <body>
 
-<div class="container px-5 my-5">
+<div class="container-lg px-5 my-3">
 
-<div class="row align-items-stretch mb-4">
+<div class="row mb-4">
 
-<div class="col-lg-6">
+<div class="col-12 col-lg-6">
+  <!-- here is the space for image and instructions -->
 </div>
-<div class="col-lg-6">
-  <!--div class="text-center mb-2 fw-700 small text-uppercase">Create Token</div-->
-  <div class="card mb-4">
+
+<div class="col-12 col-lg-6">
+
+  <div id="card1">
+    <div class="card mb-4">
+      <div class="card-body">
+        <form>
+          <div class="form-floating mb-3">
+              <input class="form-control" id="account-address" type="text" placeholder="Account Address" />
+              <label for="account-address">Account Address</label>
+          </div>
+          <div class="d-grid">
+              <button class="btn btn-primary btn-lg" id="view-account-locks" type="button">Check Locks from Account</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-body">
+        <form>
+          <div class="form-floating mb-3">
+              <input class="form-control" id="token-address" type="text" placeholder="Token Address" />
+              <label for="token-address">Token Address</label>
+          </div>
+          <div class="d-grid">
+              <button class="btn btn-primary btn-lg" id="view-token-locks" type="button">Check Locks from Token</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card mb-4">
+      <div class="card-body">
+        <form>
+          <div class="mb-3">
+              <label class="form-label d-block">Lock Tokens and Liquidity</label>
+              <label class="form-label d-block">Extend Lock</label>
+              <label class="form-label d-block">Transfer and Lock</label>
+              <label class="form-label d-block">Transfer Locked Tokens</label>
+              <label class="form-label d-block">View Your Locked Tokens</label>
+              <label class="form-label d-block">Withdraw Unlocked Tokens</label>
+          </div>
+          <div class="d-grid">
+              <button class="btn btn-primary btn-lg" id="connect-wallet" type="button">Connect Wallet</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="card2" style="display:none" class="card mb-4">
     <div class="card-body">
-
-    <form id="card1">
-        <div class="mb-3">
-            <label class="form-label d-block">Lock tokens and liquidity</label>
-            <label class="form-label d-block">View your locked tokens</label>
-            <label class="form-label d-block">Withdraw unlocked tokens</label>
-        </div>
-        <div class="d-grid">
-            <button class="btn btn-primary btn-lg" id="connect-wallet" type="button">Connect Wallet</button>
-        </div>
-    </form>
-
-
-    <form id="card2" style="display:none">
+      <form>
         <div class="mb-3">
             <label class="form-label d-block" style="text-align:center">Locked Tokens</label>
 
@@ -60,10 +98,14 @@
         <div class="d-grid">
             <button class="btn btn-primary btn-lg" id="add-lock" type="button">Lock New Tokens</button>
         </div>
-    </form>
+      </form>
+    </div>
+  </div>
 
 
-    <form id="card3" style="display:none">
+  <div id="card3" style="display:none" class="card mb-4">
+    <div class="card-body">
+      <form>
         <div class="form-floating mb-3">
             <input class="form-control" id="tokenAddress" type="text" placeholder="Token Address" />
             <label for="tokenAddress">Token Address</label>
@@ -108,7 +150,10 @@
         <div class="d-grid form-floating">
             <button class="btn btn-secondary btn-lg" id="cancel-add" type="button">Cancel</button>
         </div>
-    </form>
+      </form>
+    </div>
+  </div>
+
 
 </div>
 
