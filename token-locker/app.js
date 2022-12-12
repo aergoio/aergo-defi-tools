@@ -2,7 +2,7 @@ var $ = require('jquery');
 var swal = require('sweetalert2');
 var herajs = require('@herajs/client');
 var aergo;
-var chainId = '';
+var chainId = 'testnet.aergo.io';
 var account_address;
 var token_info = {};
 var decimals;
@@ -30,8 +30,35 @@ function hide_box() {
   $('#no-extension').remove();
 }
 
+function update_contract_addresses() {
+
+  if (chainId == "testnet.aergo.io") {
+    token_locker_address = token_locker_address_testnet
+  } else if (chainId == "aergo.io") {
+    token_locker_address = token_locker_address_mainnet
+  } else if (chainId == "alpha.aergo.io") {
+    token_locker_address = token_locker_address_alphanet
+  } else {
+    swal.fire({
+      icon: 'error',
+      text: 'This network is not yet supported'
+    })
+    return false
+  }
+
+  if (chainId == "aergo.io") {
+    multicall = multicall_mainnet
+  } else if (chainId == "testnet.aergo.io") {
+    multicall = multicall_testnet
+  } else {
+    multicall = multicall_alphanet
+  }
+
+}
+
 function connect_to_aergo() {
   var url
+  update_contract_addresses()
   if (chainId == "aergo.io") {
     url = "mainnet-api-http.aergo.io"
   } else if (chainId == "testnet.aergo.io") {
@@ -168,15 +195,26 @@ function convert_typed_amount(typed, num_decimals){
   return amount
 }
 
-function to_decimal_str(amount, num_decimals){
+function to_decimal_str(amount, num_decimals, ntrunc) {
+  if (typeof amount === "bigint") {
+    amount = amount.toString()
+  }
+  if (num_decimals == 0) {
+    return amount
+  }
+  if(ntrunc && ntrunc>0 && amount.length>ntrunc){
+    amount = amount.substr(0, ntrunc) + "0".repeat(amount.length - ntrunc)
+  }
   var index = amount.length - num_decimals
   if (index > 0) {
     amount = amount.substring(0, index) + "." + amount.substring(index)
-  }else{
+  } else {
     amount = "0." + "0".repeat(-index) + amount
   }
-  amount = amount.replace(/0+$/,'')  // remove trailing zeros
-  amount = amount.replace(/\.$/,'')  // remove trailing .
+  amount = amount.replace(/0+$/, '') // remove trailing zeros
+  if(ntrunc!=-1){
+  amount = amount.replace(/\.$/, '') // remove trailing .
+  }
   return amount
 }
 
@@ -337,36 +375,16 @@ async function connect_wallet_click(){
 
   account_address = await getActiveAccount();
 
-  if (chainId == "testnet.aergo.io") {
-    token_locker_address = token_locker_address_testnet
-  } else if (chainId == "aergo.io") {
-    token_locker_address = token_locker_address_mainnet
-  } else if (chainId == "alpha.aergo.io") {
-    token_locker_address = token_locker_address_alphanet
-  } else {
-    swal.fire({
-      icon: 'error',
-      text: 'This network is not yet supported'
-    })
-    return false
-  }
+  update_contract_addresses()
 
   if (!aergo) {
     connect_to_aergo()
   }
 
-  if (chainId == "aergo.io") {
-    multicall = multicall_mainnet
-  } else if (chainId == "testnet.aergo.io") {
-    multicall = multicall_testnet
-  } else {
-    multicall = multicall_alphanet
-  }
-
-  update_list()
-
   document.getElementById('card1').style.display = 'none'
-  document.getElementById('card2').style.display = 'block'
+  document.getElementById('card-user-locks').style.display = 'block'
+
+  update_account_locks()
 
   return false
 }
@@ -378,12 +396,14 @@ async function check_token_info(address, error_msg){
       var result = await aergo.queryContract(multicall, "aggregate",
                      [address,"name"],
                      [address,"symbol"],
-                     [address,"decimals"]
+                     [address,"decimals"],
+                     [address,"totalSupply"]
                    )
       token_info[address] = {
         name: result[0],
         symbol: result[1],
-        decimals: result[2]
+        decimals: result[2],
+        total_supply: BigInt(result[3]._bignum)
       }
     } catch (e) {
       console.log(e)
@@ -398,15 +418,28 @@ async function check_token_info(address, error_msg){
 
 }
 
-async function update_list(){
+async function update_account_locks(address) {
   var locks
-  var index
+  var is_using_wallet = !address
 
-  $('.table tbody tr').remove()
-  $('#loader').show()
+  if (!address) {
+    address = account_address
+    var table = '#user-locks-table'
+    var loader = '#loading-user-locks'
+  } else {
+    var table = '#account-locks-table'
+    var loader = '#loading-account-locks'
+  }
+
+  $(`${table} tbody tr`).remove()
+  $(loader).show()
+
+  if (!aergo) {
+    connect_to_aergo()
+  }
 
   try {
-    locks = await aergo.queryContract(token_locker_address, "locks_per_account", account_address)
+    locks = await aergo.queryContract(token_locker_address, "locks_per_account", address)
   } catch (e) {
     console.log(e)
     swal.fire({
@@ -418,9 +451,7 @@ async function update_list(){
 
   if (!locks || !Array.isArray(locks)) locks = [];
 
-  //locks.forEach(async function(lock){
-  for(index=0; index<locks.length; index++){
-
+  for(var index=0; index<locks.length; index++){
     var lock = locks[index]
 
     //lock.token
@@ -428,40 +459,116 @@ async function update_list(){
     //lock.expiration_time
 
     // retrieve the name, symbol and decimals
-
-    await check_token_info(lock.token)
+    await check_token_info(lock.token, 'Not able to query the token contract')
 
     var name = token_info[lock.token].name
     var symbol = token_info[lock.token].symbol
     var decimals2 = token_info[lock.token].decimals
 
-    var amount = lock.amount
-    if (decimals2 > 0) {
-      amount = to_decimal_str(amount, decimals2)
-    }
+    var amount = to_decimal_str(lock.amount, decimals2, 5)
 
     var expiration = (new Date(lock.expiration_time*1000)).toLocaleString()
 
-    var row = "<tr><td>" + name + "</td><td>" + amount + " " + symbol + "</td>"
-    row = row + "<td>" + expiration + "</td><td>"
-    if (lock.expiration_time < parseInt((new Date()).getTime()/1000)) {
-      row = row + "<a href=\"javascript:window.withdraw_clicked(" + (index+1) + ")\">withdraw</a>"
+    var link = ""
+    if (is_using_wallet) {
+      if (lock.expiration_time < parseInt((new Date()).getTime()/1000)) {
+        link = `<a href="javascript:window.withdraw_clicked(${index+1})">withdraw</a>`
+      }
     }
-    row = row + "</td></tr>"
 
-    $('.table tbody').append(row)
+    var row = `<tr><td>${name}</td><td>${amount} ${symbol}</td><td>${expiration}</td><td>${link}</td></tr>`
+
+    $(`${table} tbody`).append(row)
 
   }
 
-  $('#loader').hide()
+  $(loader).hide()
+
+}
+
+async function update_token_locks(token_address) {
+  var locks
+
+  $('#token-locks-table tbody tr').remove()
+  $('#loading-token-locks').show()
+
+  if (!aergo) {
+    connect_to_aergo()
+  }
+
+  // retrieve the name, symbol and decimals
+  await check_token_info(token_address, 'Not able to query the token contract. Please check the token address.')
+
+  var name = token_info[token_address].name
+  var symbol = token_info[token_address].symbol
+  var decimals2 = token_info[token_address].decimals
+
+  document.getElementById('info-token-name').innerHTML = 'Token Name: ' + name
+  document.getElementById('info-token-symbol').innerHTML = 'Token Symbol: ' + symbol
+
+  try {
+    locks = await aergo.queryContract(token_locker_address, "locks_per_token", token_address)
+  } catch (e) {
+    console.log(e)
+    swal.fire({
+      icon: 'error',
+      text: 'Not able to query the token locker contract'
+    })
+    return
+  }
+
+  if (!locks || !Array.isArray(locks)) locks = [];
+
+  var total_supply  = token_info[token_address].total_supply
+  var locked_supply = BigInt(0)
+
+  for (var lock of locks) {
+    //lock.account
+    //lock.amount
+    //lock.expiration_time
+
+    var amount = lock.amount
+    locked_supply += BigInt(lock.amount)
+    amount = to_decimal_str(lock.amount, decimals2, 5)
+
+    var expiration = (new Date(lock.expiration_time*1000)).toLocaleString()
+
+    var short_account = lock.account.substring(0, 5) + '...' + lock.account.substring(lock.account.length - 4)
+
+    var row = `<tr><td title="${lock.account}">${short_account}</td>
+               <td>${amount} ${symbol}</td><td>${expiration}</td></tr>`
+
+    $('#token-locks-table tbody').append(row)
+  }
+
+  // update the chart
+
+  var locked_percent = (locked_supply * BigInt(100)) / total_supply
+  locked_percent = parseInt(locked_percent.toString())  // from BigInt to Number
+
+  document.getElementById('chart').setAttribute('stroke-dasharray', `${locked_percent} ${100 - locked_percent}`)
+  document.getElementById('locked-percent').innerHTML = `${locked_percent}%`  // `${locked_percent.toFixed(2)}%`
+
+  // update the token supply info
+
+  var circul_supply = total_supply - locked_supply
+
+  total_supply  = to_decimal_str(total_supply,  decimals2)
+  locked_supply = to_decimal_str(locked_supply, decimals2)
+  circul_supply = to_decimal_str(circul_supply, decimals2)
+
+  document.getElementById('info-total-supply').innerHTML  = `Total Supply: ${total_supply} ${symbol}`
+  document.getElementById('info-locked-supply').innerHTML = `Locked Supply: ${locked_supply} ${symbol}`
+  document.getElementById('info-circul-supply').innerHTML = `Circulating Supply: ${circul_supply} ${symbol}`
+
+  $('#loading-token-locks').hide()
+  $('.svg-chart').show()
 
 }
 
 function add_lock_click(){
-
-  document.getElementById('card2').style.display = 'none'
-  document.getElementById('card3').style.display = 'block'
-
+  document.getElementById('card-user-locks').style.display = 'none'
+  document.getElementById('card-add-lock').style.display = 'block'
   return false
 }
 
@@ -471,16 +578,78 @@ function lock_tokens_click(){
 }
 
 async function on_tokens_locked(){
-  update_list()
-  document.getElementById('card3').style.display = 'none'
-  document.getElementById('card2').style.display = 'block'
+  document.getElementById('card-add-lock').style.display = 'none'
+  document.getElementById('card-user-locks').style.display = 'block'
+  update_account_locks()
 }
 
 function cancel_add_click(){
-  document.getElementById('card3').style.display = 'none'
-  document.getElementById('card2').style.display = 'block'
+  document.getElementById('card-add-lock').style.display = 'none'
+  document.getElementById('card-user-locks').style.display = 'block'
 }
 
+function view_account_locks_click() {
+
+  var address = document.getElementById('account-address').value
+
+  if (address) {
+    try {
+      herajs.Address.decode(address)
+    } catch (e) {
+      swal.fire({
+        icon: 'error',
+        text: 'The account address is invalid'
+      })
+      return false
+    }
+  } else {
+    swal.fire({
+      icon: 'error',
+      text: 'Please enter the account address'
+    })
+    return false
+  }
+
+  document.getElementById('card1').style.display = 'none'
+  document.getElementById('card-account-locks').style.display = 'block'
+
+  update_account_locks(address)
+
+  return false
+}
+
+async function view_token_locks_click() {
+
+  var token_address = document.getElementById('token-address').value
+
+  if (token_address) {
+    try {
+      herajs.Address.decode(token_address)
+    } catch (e) {
+      swal.fire({
+        icon: 'error',
+        text: 'The token address is invalid'
+      })
+      return false
+    }
+  } else {
+    swal.fire({
+      icon: 'error',
+      text: 'Please enter the token address'
+    })
+    return false
+  }
+
+  document.getElementById('card1').style.display = 'none'
+  document.getElementById('card-token-locks').style.display = 'block'
+
+  update_token_locks(token_address)
+
+  return false
+}
+
+document.getElementById("view-account-locks").onclick = view_account_locks_click;
+document.getElementById("view-token-locks").onclick = view_token_locks_click
 document.getElementById("connect-wallet").onclick = connect_wallet_click;
 document.getElementById("add-lock").onclick = add_lock_click;
 document.getElementById("lock-tokens").onclick = lock_tokens_click;

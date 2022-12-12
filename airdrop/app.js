@@ -159,6 +159,7 @@ function encode_utf8(s) {
 
 function convert_typed_amount(typed, num_decimals){
   var amount
+  if(!typed || typed=='') typed = '0'
   typed = typed.replace(',','.')
   var pos = typed.indexOf('.')
   if (pos < 0) {
@@ -182,15 +183,26 @@ function convert_typed_amount(typed, num_decimals){
   return amount
 }
 
-function to_decimal_str(amount, num_decimals){
+function to_decimal_str(amount, num_decimals, ntrunc) {
+  if (typeof amount === "bigint") {
+    amount = amount.toString()
+  }
+  if (num_decimals == 0) {
+    return amount
+  }
+  if(ntrunc && ntrunc>0 && amount.length>ntrunc){
+    amount = amount.substr(0, ntrunc) + "0".repeat(amount.length - ntrunc)
+  }
   var index = amount.length - num_decimals
   if (index > 0) {
     amount = amount.substring(0, index) + "." + amount.substring(index)
-  }else{
+  } else {
     amount = "0." + "0".repeat(-index) + amount
   }
-  amount = amount.replace(/0+$/,'')  // remove trailing zeros
-  amount = amount.replace(/\.$/,'')  // remove trailing .
+  amount = amount.replace(/0+$/, '') // remove trailing zeros
+  if(ntrunc!=-1){
+  amount = amount.replace(/\.$/, '') // remove trailing .
+  }
   return amount
 }
 

@@ -15,7 +15,7 @@
 </head>
 <body>
 
-<div class="container-lg px-5 my-3">
+<div class="container-lg px-lg-5 my-3">
 
 <div class="row mb-4">
 
@@ -74,25 +74,107 @@
   </div>
 
 
-  <div id="card2" style="display:none" class="card mb-4">
+  <div id="card-token-locks" style="display:none" class="card mb-4">
+    <div class="card-body">
+      <form>
+        <div class="mt-2 mb-3">
+            <label id="info-token-name"   class="form-label d-block text-center">Token Name:</label>
+            <label id="info-token-symbol" class="form-label d-block text-center">Token Symbol:</label>
+        </div>
+
+        <div class="mb-3">
+
+            <div class="svg-chart" style="display:none">
+                <svg width="100%" height="100%" viewBox="0 0 40 40" class="donut">
+                  <circle class="donut-hole" cx="20" cy="20" r="15.91549430918954" fill="#fff"></circle>
+                  <circle class="donut-ring" cx="20" cy="20" r="15.91549430918954" fill="transparent" stroke-width="3.5"></circle>
+                  <circle class="donut-segment donut-segment-4" id="chart" cx="20" cy="20" r="15.91549430918954" fill="transparent" stroke-width="3.5" stroke-dasharray="1 99" stroke-dashoffset="25"></circle>
+                  <g class="donut-text donut-text-3">
+                    <text y="50%" transform="translate(0, 2)">
+                      <tspan x="50%" text-anchor="middle" class="donut-percent" id="locked-percent">1%</tspan>   
+                    </text>
+                    <text y="60%" transform="translate(0, 2)">
+                      <tspan x="50%" text-anchor="middle" class="donut-data">Locked</tspan>   
+                    </text>
+                  </g>
+                </svg>
+            </div>
+
+            <div id="loading-token-locks" class="loader"></div>
+
+        </div>
+
+        <div class="mb-5">
+            <label id="info-total-supply"  class="form-label d-block text-center">Total Supply:</label>
+            <label id="info-locked-supply" class="form-label d-block text-center">Locked Supply:</label>
+            <label id="info-circul-supply" class="form-label d-block text-center">Circulating Supply:</label>
+        </div>
+
+        <div class="mb-3">
+            <!-- label class="form-label d-block" style="text-align:center">Locked Tokens</label -->
+            <table class="table" id="token-locks-table">
+              <thead>
+                <tr>
+                  <th scope="col">Owner</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Unlock Date</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+        </div>
+        <div class="d-grid">
+            <button class="btn btn-primary btn-lg" id="xxxx" type="button">Lock New Tokens</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <div id="card-account-locks" style="display:none" class="card mb-4">
     <div class="card-body">
       <form>
         <div class="mb-3">
             <label class="form-label d-block" style="text-align:center">Locked Tokens</label>
 
-            <table class="table">
+            <table class="table" id="account-locks-table">
               <thead>
                 <tr>
                   <th scope="col">Token</th>
                   <th scope="col">Amount</th>
-                  <th scope="col">Expiration</th>
+                  <th scope="col">Unlock Date</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+
+            <div id="loading-account-locks" class="loader"></div>
+
+        </div>
+      </form>
+    </div>
+  </div>
+
+
+  <div id="card-user-locks" style="display:none" class="card mb-4">
+    <div class="card-body">
+      <form>
+        <div class="mb-3">
+            <label class="form-label d-block" style="text-align:center">Locked Tokens</label>
+
+            <table class="table" id="user-locks-table">
+              <thead>
+                <tr>
+                  <th scope="col">Token</th>
+                  <th scope="col">Amount</th>
+                  <th scope="col">Unlock Date</th>
                   <th scope="col">&nbsp;</th>
                 </tr>
               </thead>
               <tbody></tbody>
             </table>
 
-            <div id="loader" class="loader1"></div>
+            <div id="loading-user-locks" class="loader"></div>
 
         </div>
         <div class="d-grid">
@@ -103,7 +185,7 @@
   </div>
 
 
-  <div id="card3" style="display:none" class="card mb-4">
+  <div id="card-add-lock" style="display:none" class="card mb-4">
     <div class="card-body">
       <form>
         <div class="form-floating mb-3">
