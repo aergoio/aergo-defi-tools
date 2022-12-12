@@ -470,16 +470,21 @@ async function update_account_locks(address) {
 
     var expiration = (new Date(lock.expiration_time*1000)).toLocaleString()
 
-    var link = ""
-    if (is_using_wallet) {
-      if (lock.expiration_time < parseInt((new Date()).getTime()/1000)) {
-        link = `<a href="javascript:window.withdraw_clicked(${index+1})">withdraw</a>`
-      }
-    }
-
-    var row = `<tr><td>${name}</td><td>${amount} ${symbol}</td><td>${expiration}</td><td>${link}</td></tr>`
+    var row = `<tr><td class="row-no-mb">${name}</td><td class="row-no-mb">${amount} ${symbol}</td><td class="row-no-mb">${expiration}</td></tr>`
 
     $(`${table} tbody`).append(row)
+
+    if (is_using_wallet) {
+      var links = "<div>"
+      links += `<a class="btn btn-primary btn-sm" href="javascript:window.extend_clicked(${index+1})">Extend</a>`
+      links += `<a class="btn btn-primary btn-sm" href="javascript:window.transfer_clicked(${index+1})">Transfer</a>`
+      if (lock.expiration_time < parseInt((new Date()).getTime()/1000)) {
+        links += `<a class="btn btn-primary btn-sm" href="javascript:window.withdraw_clicked(${index+1})">Withdraw</a>`
+      }
+      links += "</div>"
+      row = `<tr><td colspan="3">${links}</td></tr>`
+      $(`${table} tbody`).append(row)
+    }
 
   }
 

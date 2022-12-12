@@ -8971,6 +8971,17 @@ fa-icon .fa-2x {
 }
 
 
+/* add a style for every other row in the user-locks-table */
+#user-locks-table tr:nth-child(odd) > td {
+	border-bottom-width: 0px;
+	padding-bottom: 0px;
+}
+
+#user-locks-table a.btn-sm {
+	margin-right: 0.5rem;
+}
+
+
 /* Donut chart */
 
 .svg-chart {
