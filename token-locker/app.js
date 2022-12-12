@@ -648,6 +648,24 @@ async function view_token_locks_click() {
   return false
 }
 
+document.getElementById("back-button-1").onclick = function(){
+  document.getElementById('card1').style.display = 'block'
+  document.getElementById('card-token-locks').style.display = 'none'
+  return false
+}
+
+document.getElementById("back-button-2").onclick = function(){
+  document.getElementById('card1').style.display = 'block'
+  document.getElementById('card-account-locks').style.display = 'none'
+  return false
+}
+
+document.getElementById("back-button-3").onclick = function(){
+  document.getElementById('card1').style.display = 'block'
+  document.getElementById('card-user-locks').style.display = 'none'
+  return false
+}
+
 document.getElementById("view-account-locks").onclick = view_account_locks_click;
 document.getElementById("view-token-locks").onclick = view_token_locks_click
 document.getElementById("connect-wallet").onclick = connect_wallet_click;
