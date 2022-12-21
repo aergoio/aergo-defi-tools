@@ -236,7 +236,9 @@ async function connect_wallet_click(){
     multicall = multicall_alphanet
   }
 
-  next_step()
+  if (cur_step == 0) {
+    next_step()
+  }
 
   return false
 }
